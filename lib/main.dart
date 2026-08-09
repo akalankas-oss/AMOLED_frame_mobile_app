@@ -12,6 +12,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:image/image.dart' as image_lib;
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -842,7 +843,7 @@ class _FramePageState extends State<FramePage> {
               ),
               const SizedBox(height: 16),
               AspectRatio(
-                aspectRatio: panelHeight / panelWidth,
+                aspectRatio: panelWidth / panelHeight,
                 child: Container(
                   width: double.infinity,
                   decoration: BoxDecoration(
@@ -1071,16 +1072,11 @@ class FlashBannerPage extends StatefulWidget {
 }
 
 class _FlashBannerPageState extends State<FlashBannerPage> {
-  // Raw/physical canvas — matches the panel's own 192x960 portrait pixel
-  // format (same convention ImageEditorPage's export uses).
-  static const double _canvasWidth = 192;
-  static const double _canvasHeight = 960;
-  // Virtual (rotated) drawing space: what you actually see once the app's
-  // landscape display rotation is applied. Drawing text upright here, then
-  // rotating the physical canvas 90° to match, is the same trick
-  // ImageEditorPage's per-item RotatedBox(quarterTurns: 1) uses.
-  static const double _virtualWidth = _canvasHeight; // 960
-  static const double _virtualHeight = _canvasWidth; // 192
+  // Native landscape canvas — matches the panel's physical 960×192 layout.
+  // The firmware memcpys decoded pixels straight into the 960×192 framebuffer,
+  // so the JPEG must be exactly this size.
+  static const double _canvasWidth = 960;
+  static const double _canvasHeight = 192;
 
   final TextEditingController _textController = TextEditingController(text: 'HELLO!');
   Color _textColor = Colors.white;
@@ -1145,42 +1141,44 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
 
   Future<Uint8List> _renderFrame({required double textX, required bool showText}) async {
     final recorder = ui.PictureRecorder();
+    // Draw directly on the native 960×192 landscape canvas — no rotation tricks.
     final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, _canvasWidth, _canvasHeight));
 
-    // Rotate the drawing 90° so content appears correctly oriented once the
-    // final image is displayed rotated by the app's landscape convention.
-    canvas.save();
-    canvas.translate(_canvasWidth, 0);
-    canvas.rotate(math.pi / 2);
-
-    canvas.drawRect(const Rect.fromLTWH(0, 0, _virtualWidth, _virtualHeight), Paint()..color = _bgColor);
+    canvas.drawRect(const Rect.fromLTWH(0, 0, _canvasWidth, _canvasHeight), Paint()..color = _bgColor);
 
     if (showText && _textController.text.isNotEmpty) {
       final tp = _makeTextPainter();
-      final ty = (_virtualHeight - tp.height) / 2;
+      final ty = (_canvasHeight - tp.height) / 2;
       tp.paint(canvas, Offset(textX, ty));
     }
 
-    canvas.restore();
-
     final picture = recorder.endRecording();
-    final img = await picture.toImage(_canvasWidth.round(), _canvasHeight.round());
-    final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
-    return byteData!.buffer.asUint8List();
+    // toImage() produces exactly 960×192 — landscape, matching the firmware framebuffer.
+    final uiImg = await picture.toImage(_canvasWidth.round(), _canvasHeight.round());
+    final byteData = await uiImg.toByteData(format: ui.ImageByteFormat.rawRgba);
+    final rawPixels = byteData!.buffer.asUint8List();
+    final landscape = image_lib.Image.fromBytes(
+      width: _canvasWidth.round(),   // 960
+      height: _canvasHeight.round(), // 192
+      bytes: rawPixels.buffer,
+      format: image_lib.Format.uint8,
+      numChannels: 4,
+    );
+    return Uint8List.fromList(image_lib.encodeJpg(landscape, quality: 90));
   }
 
   Future<List<Uint8List>> _generateFrames() async {
     final frames = <Uint8List>[];
     if (_effect == _BannerEffect.blink) {
       final tp = _makeTextPainter();
-      final centeredX = (_virtualWidth - tp.width) / 2;
+      final centeredX = (_canvasWidth - tp.width) / 2;
       frames.add(await _renderFrame(textX: centeredX, showText: true));
       frames.add(await _renderFrame(textX: centeredX, showText: false));
     } else {
       final tp = _makeTextPainter();
       final textWidth = tp.width;
       const int steps = 14; // keep the BLE upload count manageable
-      final startX = _virtualWidth;
+      final startX = _canvasWidth;
       final endX = -textWidth;
       for (int i = 0; i <= steps; i++) {
         final t = i / steps;
@@ -1267,7 +1265,7 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
             _colorSwatches(_bgColor, (c) => setState(() => _bgColor = c)),
             const SizedBox(height: 20),
             AspectRatio(
-              aspectRatio: _virtualWidth / _virtualHeight,
+              aspectRatio: _canvasWidth / _canvasHeight,
               child: Container(
                 decoration: BoxDecoration(
                   color: _bgColor,
@@ -1352,8 +1350,9 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
   // BoxFit.contain for the background image (see below) means the whole
   // photo is always visible inside this canvas — never invisibly cropped
   // away — and you can pinch-zoom in from there to focus on any part of it.
-  static const double _canvasWidth = 192;
-  static const double _canvasHeight = 960;
+  // Native landscape canvas — 960×192 matches the panel's physical layout.
+  static const double _canvasWidth = 960;
+  static const double _canvasHeight = 192;
   // Actual rendered size of the canvas Stack (updated on every layout pass).
   // AspectRatio only guarantees the 192:960 ratio, not this exact absolute
   // size, so new items are centered using this rather than the constants.
@@ -1660,16 +1659,37 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
 
       await Future.delayed(const Duration(milliseconds: 300));
 
-      RenderRepaintBoundary boundary = _boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
-      ui.Image image = await boundary.toImage(pixelRatio: 1.0);
-      ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      if (byteData != null) {
-        Uint8List renderedPng = byteData.buffer.asUint8List();
-        Navigator.of(context).pop(renderedPng);
+      final RenderRepaintBoundary boundary =
+          _boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+
+      // The canvas is now a true 960×192 landscape widget (no RotatedBox).
+      // boundary.size.width is the on-screen logical width of the landscape strip.
+      // We need pixelRatio so that: logical_width × pixelRatio == _canvasWidth (960).
+      final double renderedLogicalWidth = boundary.size.width;
+      final double neededPixelRatio = _canvasWidth / renderedLogicalWidth;
+
+      // Capture at exactly 960×192 physical pixels.
+      final ui.Image captured = await boundary.toImage(pixelRatio: neededPixelRatio);
+
+      final ByteData? rawData =
+          await captured.toByteData(format: ui.ImageByteFormat.rawRgba);
+      if (rawData != null) {
+        final imgLib = image_lib.Image.fromBytes(
+          width: captured.width,   // 960
+          height: captured.height, // 192
+          bytes: rawData.buffer,
+          format: image_lib.Format.uint8,
+          numChannels: 4,
+        );
+        // Encode as real JPEG — the firmware memcpys directly into the
+        // 960×192 framebuffer, so pixels must be in landscape order.
+        final Uint8List jpegBytes =
+            Uint8List.fromList(image_lib.encodeJpg(imgLib, quality: 90));
+        if (mounted) Navigator.of(context).pop(jpegBytes);
       }
     } catch (e) {
-      debugPrint("Export failed: $e");
-      setState(() { _isSaving = false; });
+      debugPrint('Export failed: $e');
+      if (mounted) setState(() { _isSaving = false; });
     }
   }
 
@@ -1933,28 +1953,19 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
           Expanded(
             flex: 3,
             child: Center(
-              // The panel's raw pixel data is 192x960 (portrait), but the
-              // physical panel is mounted landscape - so we rotate the
-              // display here (same convention FramePage's own preview uses)
-              // while editing. This only changes what's painted on screen;
-              // globalToLocal() correctly accounts for RotatedBox, so all
-              // drag/pinch/rotate math below keeps working unchanged.
-              //
+              // The panel's raw pixel data is 960x192 (landscape).
               // The Container below just draws a visible border around the
-              // canvas boundary as a visual guide — it wraps the RotatedBox
-              // from OUTSIDE the RepaintBoundary, so it never gets baked
-              // into the exported image.
+              // canvas boundary as a visual guide.
               child: Container(
                 decoration: BoxDecoration(
                   border: Border.all(color: Colors.amberAccent, width: 2),
                 ),
-                child: RotatedBox(
-                  quarterTurns: 3,
-                  child: AspectRatio(
-                    aspectRatio: _canvasWidth / _canvasHeight,
-                    child: RepaintBoundary(
-                      key: _boundaryKey,
-                      child: LayoutBuilder(
+                // Canvas is native 960×192 landscape — no RotatedBox needed.
+                child: AspectRatio(
+                  aspectRatio: _canvasWidth / _canvasHeight,
+                  child: RepaintBoundary(
+                    key: _boundaryKey,
+                    child: LayoutBuilder(
                           builder: (context, constraints) {
                             // AspectRatio only fixes the RATIO, not the
                             // absolute size — the actual rendered box could
@@ -2141,7 +2152,6 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                 ),
               ),
             ),
-          ),
           Expanded(
             flex: 2,
             child: Opacity(
