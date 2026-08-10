@@ -17,10 +17,15 @@ const int panelHeight = 192;
 // renderTextToPanelImage below so photos and text-composed images are
 // treated identically.
 Uint8List fitImageToPanel(Uint8List sourceBytes) {
-  final decoded = img.decodeImage(sourceBytes);
-  if (decoded == null) {
+  final rawDecoded = img.decodeImage(sourceBytes);
+  if (rawDecoded == null) {
     throw Exception('Could not decode image');
   }
+  // Apply EXIF orientation tag (e.g. portrait photos shot on Android/iOS
+  // arrive with Rotate-90 CW in EXIF but physical pixels still landscape).
+  // bakeOrientation() rotates the pixel data to match the tag, then clears
+  // the tag so the output JPEG has no misleading orientation metadata.
+  final decoded = img.bakeOrientation(rawDecoded);
 
   const targetWidth = panelWidth;  // 960
   const targetHeight = panelHeight; // 192

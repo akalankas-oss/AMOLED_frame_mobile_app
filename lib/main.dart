@@ -476,19 +476,25 @@ class _FramePageState extends State<FramePage> {
   // detail, so downscaling before editing keeps things smooth without any
   // visible quality loss on the final panel.
   Future<Uint8List> _downscaleForEditing(Uint8List bytes, {int maxDimension = 1000}) async {
-    final codec = await ui.instantiateImageCodec(bytes);
-    final frame = await codec.getNextFrame();
-    final img = frame.image;
-    if (img.width <= maxDimension && img.height <= maxDimension) {
-      return bytes;
+    // Use image_lib (not the Flutter codec) so we can call bakeOrientation()
+    // reliably regardless of platform. Without this, portrait gallery photos
+    // open sideways in the editor because the Flutter codec may or may not
+    // auto-apply the EXIF orientation depending on the OS version.
+    final rawDecoded = image_lib.decodeImage(bytes);
+    if (rawDecoded == null) return bytes; // Fallback: pass original bytes unchanged
+    final oriented = image_lib.bakeOrientation(rawDecoded);
+
+    if (oriented.width <= maxDimension && oriented.height <= maxDimension) {
+      // No resize needed — just re-encode with orientation baked in.
+      return Uint8List.fromList(image_lib.encodeJpg(oriented, quality: 92));
     }
-    final scale = maxDimension / (img.width > img.height ? img.width : img.height);
-    final targetWidth = (img.width * scale).round().clamp(1, 1 << 20);
-    final targetHeight = (img.height * scale).round().clamp(1, 1 << 20);
-    final resizedCodec = await ui.instantiateImageCodec(bytes, targetWidth: targetWidth, targetHeight: targetHeight);
-    final resizedFrame = await resizedCodec.getNextFrame();
-    final byteData = await resizedFrame.image.toByteData(format: ui.ImageByteFormat.png);
-    return byteData!.buffer.asUint8List();
+    final scale = maxDimension / (oriented.width > oriented.height ? oriented.width : oriented.height);
+    final resized = image_lib.copyResize(
+      oriented,
+      width: (oriented.width * scale).round(),
+      height: (oriented.height * scale).round(),
+    );
+    return Uint8List.fromList(image_lib.encodeJpg(resized, quality: 92));
   }
 
   // Full editing flow: pick a photo from the gallery, then open the
@@ -575,6 +581,9 @@ class _FramePageState extends State<FramePage> {
   Future<void> _sendChunked(Uint8List payload) async {
     final chunkSize = (_mtu - 3).clamp(20, 500);
     for (int offset = 0; offset < payload.length; offset += chunkSize) {
+      // Re-check connection on every chunk: a disconnect mid-upload would
+      // otherwise throw a null-dereference instead of a clear message.
+      if (_rxChar == null) throw Exception('Disconnected during transfer');
       final end = (offset + chunkSize < payload.length) ? offset + chunkSize : payload.length;
       await _rxChar!.write(payload.sublist(offset, end), withoutResponse: false);
     }
@@ -736,6 +745,9 @@ class _FramePageState extends State<FramePage> {
       _addLog('Stop rotation failed: $e');
     } finally {
       _pendingIndexCompleter = null;
+      // Fix: _busy was never reset here, causing permanent UI deadlock after
+      // pressing Stop Rotation (all buttons frozen, spinner stuck forever).
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -809,12 +821,16 @@ class _FramePageState extends State<FramePage> {
 
     setState(() => _busy = true);
     try {
+      // Phase 1: Download any on-device images we intend to keep so we
+      // have local copies before the irreversible format step.
+      _addLog('Downloading ${toKeep.length} image(s) before format...');
       for (final image in toKeep) {
         if (image.fullBytes == null && image.deviceIndex != null) {
           image.fullBytes = await _downloadImage(image.deviceIndex!);
         }
       }
 
+      // Phase 2: Irreversible — wipe the device storage.
       await _sendFormatCommand();
 
       setState(() {
@@ -823,6 +839,9 @@ class _FramePageState extends State<FramePage> {
         _rotationActive = false;
       });
 
+      // Phase 3: Re-upload the images we kept. Track failures so we can
+      // inform the user exactly which images were not recovered.
+      final List<String> failedLabels = [];
       for (final image in toKeep) {
         if (image.fullBytes != null) {
           try {
@@ -831,8 +850,9 @@ class _FramePageState extends State<FramePage> {
               _sentImages.add(image);
             });
           } catch (e) {
-            _addLog('Failed to re-upload image during delete: $e');
-            break;
+            _addLog('Failed to re-upload "${image.label}" during delete: $e');
+            failedLabels.add(image.label);
+            // Don't break — try to re-upload the remaining images.
           }
         }
       }
@@ -844,8 +864,36 @@ class _FramePageState extends State<FramePage> {
       if (_activeIndex != null && neighbor!.deviceIndex != null) {
         await _sendChunked(_buildHeader(_showIndexCmdMagic, neighbor.deviceIndex!));
       }
+
+      // Inform the user if any images could not be recovered after the format.
+      if (failedLabels.isNotEmpty && mounted) {
+        showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Some images not restored'),
+            content: Text(
+              'The device was formatted successfully, but the following '
+              'image(s) could not be re-uploaded (BLE error or disconnect) '
+              'and are no longer on the device:\n\n'
+              '${failedLabels.join('\n')}\n\n'
+              'Their bytes are still in the app — re-send them manually.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
     } catch (e) {
       _addLog('Delete failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Delete failed: $e')),
+        );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1754,7 +1802,19 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
       }
     } catch (e) {
       debugPrint('Export failed: $e');
-      if (mounted) setState(() { _isSaving = false; });
+      if (mounted) {
+        setState(() { _isSaving = false; });
+        // Show a visible error — previously this only printed to debug console
+        // (invisible in release builds), leaving the editor stuck with a
+        // frozen save spinner and no way to recover.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Export failed: $e'),
+            backgroundColor: Colors.red.shade700,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     }
   }
 
