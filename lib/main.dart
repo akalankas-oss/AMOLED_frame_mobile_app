@@ -138,6 +138,39 @@ class _FramePageState extends State<FramePage> {
   Completer<Uint8List>? _pendingDownloadCompleter;
 
   bool _busy = false;
+
+  final List<Future<void> Function()> _bleQueue = [];
+  bool _bleProcessing = false;
+
+  Future<T> _enqueueBleTask<T>(Future<T> Function() task, {bool highPriority = false}) {
+    final completer = Completer<T>();
+    final taskWrapper = () async {
+      try {
+        final result = await task();
+        if (!completer.isCompleted) completer.complete(result);
+      } catch (e) {
+        if (!completer.isCompleted) completer.completeError(e);
+      }
+    };
+    if (highPriority) {
+      _bleQueue.insert(0, taskWrapper);
+    } else {
+      _bleQueue.add(taskWrapper);
+    }
+    _processBleQueue();
+    return completer.future;
+  }
+
+  Future<void> _processBleQueue() async {
+    if (_bleProcessing) return;
+    _bleProcessing = true;
+    while (_bleQueue.isNotEmpty) {
+      final task = _bleQueue.removeAt(0);
+      try { await task(); } catch (e) { print('BLE Task Error: $e'); }
+    }
+    _bleProcessing = false;
+  }
+
   bool _syncing = false;
   bool _syncedOnce = false;
   double _brightness = 255;
@@ -208,9 +241,24 @@ class _FramePageState extends State<FramePage> {
         withServices: [_nusServiceUuid],
         timeout: const Duration(seconds: 10),
       );
+      
+      // Wait for the scan to finish
+      await FlutterBluePlus.isScanning.where((scanning) => !scanning).first;
+      
+      if (mounted && _connState == FrameConnState.scanning) {
+        _addLog('Scan timed out. Device not found.');
+        setState(() => _connState = FrameConnState.disconnected);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Scan timed out. Device not found.')),
+          );
+        }
+      }
     } catch (e) {
       _addLog('Scan failed: $e');
-      setState(() => _connState = FrameConnState.disconnected);
+      if (mounted) {
+        setState(() => _connState = FrameConnState.disconnected);
+      }
     }
   }
 
@@ -627,7 +675,8 @@ class _FramePageState extends State<FramePage> {
     });
   }
 
-  Future<void> _sendSelectedToDevice() async {
+  Future<void> _sendSelectedToDevice() => _enqueueBleTask(_doSendSelectedToDevice);
+  Future<void> _doSendSelectedToDevice() async {
     if (_rxChar == null || _busy) return;
     final toSend = _sentImages.where((i) => i.selectedForRotation && i.deviceIndex == null && i.fullBytes != null).toList();
     if (toSend.isEmpty) return;
@@ -646,7 +695,8 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  Future<void> _startRotation() async {
+  Future<void> _startRotation() => _enqueueBleTask(_doStartRotation);
+  Future<void> _doStartRotation() async {
     final selected = _sentImages.where((i) => i.selectedForRotation).toList();
     if (selected.isEmpty || _rxChar == null) return;
 
@@ -675,7 +725,8 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  Future<void> _stopRotation() async {
+  Future<void> _stopRotation() => _enqueueBleTask(_doStopRotation, highPriority: true);
+  Future<void> _doStopRotation() async {
     if (_rxChar == null) return;
     setState(() => _busy = true);
     try {
@@ -688,7 +739,8 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  Future<void> _formatDevice() async {
+  Future<void> _formatDevice() => _enqueueBleTask(_doFormatDevice, highPriority: true);
+  Future<void> _doFormatDevice() async {
     if (_rxChar == null || _busy) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -718,7 +770,8 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  Future<void> _deleteSelectedImages() async {
+  Future<void> _deleteSelectedImages() => _enqueueBleTask(_doDeleteSelectedImages);
+  Future<void> _doDeleteSelectedImages() async {
     final toDelete = _sentImages.where((i) => i.selectedForRotation).toList();
     if (toDelete.isEmpty || _rxChar == null || _busy) return;
 
@@ -764,21 +817,31 @@ class _FramePageState extends State<FramePage> {
 
       await _sendFormatCommand();
 
+      setState(() {
+        _sentImages.clear();
+        _activeIndex = null;
+        _rotationActive = false;
+      });
+
       for (final image in toKeep) {
         if (image.fullBytes != null) {
-          image.deviceIndex = await _uploadImageWithThumbnail(image);
+          try {
+            image.deviceIndex = await _uploadImageWithThumbnail(image);
+            setState(() {
+              _sentImages.add(image);
+            });
+          } catch (e) {
+            _addLog('Failed to re-upload image during delete: $e');
+            break;
+          }
         }
       }
 
       setState(() {
-        _sentImages
-          ..clear()
-          ..addAll(toKeep);
-        _activeIndex = neighbor != null ? _sentImages.indexOf(neighbor) : null;
-        _rotationActive = false;
+        _activeIndex = neighbor != null && _sentImages.contains(neighbor) ? _sentImages.indexOf(neighbor) : null;
       });
 
-      if (neighbor != null && neighbor.deviceIndex != null) {
+      if (_activeIndex != null && neighbor!.deviceIndex != null) {
         await _sendChunked(_buildHeader(_showIndexCmdMagic, neighbor.deviceIndex!));
       }
     } catch (e) {
@@ -788,7 +851,8 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  Future<void> _sendBrightness(int level) async {
+  Future<void> _sendBrightness(int level) => _enqueueBleTask(() => _doSendBrightness(level), highPriority: true);
+  Future<void> _doSendBrightness(int level) async {
     if (_rxChar == null) return;
     try {
       await _sendChunked(_buildHeader(_brightnessCmdMagic, level));
@@ -1044,7 +1108,7 @@ class _FramePageState extends State<FramePage> {
               ),
               const SizedBox(height: 8),
               ElevatedButton.icon(
-                onPressed: !connected ? null : _rotationActive ? _stopRotation : (anySelected ? _startRotation : null),
+                onPressed: (!connected || _busy) ? null : _rotationActive ? _stopRotation : (anySelected ? _startRotation : null),
                 icon: Icon(_rotationActive ? Icons.stop : Icons.play_arrow),
                 label: Text(_rotationActive ? 'Stop Rotation' : 'Start Rotation'),
               ),
@@ -1105,7 +1169,7 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
         itemCount: _colorPalette.length,
         itemBuilder: (ctx, idx) {
           final c = _colorPalette[idx];
-          final isSelected = c.value == active.value;
+          final isSelected = c == active;
           return GestureDetector(
             onTap: () => onPicked(c),
             child: Container(
@@ -1476,7 +1540,8 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
   ];
 
   Future<void> _showCustomColorPicker(Color initial, ValueChanged<Color> onPicked) async {
-    int r = initial.red, g = initial.green, b = initial.blue;
+    final int argb = initial.toARGB32();
+    int r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF;
     await showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -1701,7 +1766,7 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
         itemCount: _colorPalette.length,
         itemBuilder: (ctx, idx) {
           final c = _colorPalette[idx];
-          final isSelected = c.value == activeColor.value;
+          final isSelected = c == activeColor;
           return GestureDetector(
             onTap: () => _setActiveItemColor(c),
             child: Container(
@@ -1908,7 +1973,7 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                             itemCount: _colorPalette.length,
                             itemBuilder: (ctx, idx) {
                               final c = _colorPalette[idx];
-                              final isSelected = c.value == _bgColor.value;
+                              final isSelected = c == _bgColor;
                               return GestureDetector(
                                 onTap: () => _setBackgroundColor(c),
                                 child: Container(
@@ -2067,14 +2132,14 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                         });
                                       },
                                       onScaleEnd: (_) => _dragAnchor = null,
-                                      child: Stack(
-                                        clipBehavior: Clip.none,
-                                        children: [
-                                          Transform.rotate(
-                                            angle: item.rotation,
-                                            child: Transform.scale(
-                                              scale: item.scale,
-                                              child: Container(
+                                      child: Transform.rotate(
+                                        angle: item.rotation,
+                                        child: Transform.scale(
+                                          scale: item.scale,
+                                          child: Stack(
+                                            clipBehavior: Clip.none,
+                                            children: [
+                                              Container(
                                                 padding: const EdgeInsets.all(12),
                                                 constraints: BoxConstraints(
                                                   maxWidth: item.isSticker ? double.infinity : _canvasWidth - 40,
@@ -2116,8 +2181,6 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                                   ),
                                                 ),
                                               ),
-                                            ),
-                                          ),
                                           // Small delete button pinned to the item's
                                           // top-right corner, visible only while
                                           // this item is selected.
@@ -2139,6 +2202,8 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                               ),
                                             ),
                                         ],
+                                      ),
+                                        ),
                                       ),
                                     ),
                                   );
