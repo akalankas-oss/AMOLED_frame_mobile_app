@@ -855,7 +855,7 @@ class _FramePageState extends State<FramePage> {
               ),
               const SizedBox(height: 16),
               AspectRatio(
-                aspectRatio: panelWidth / panelHeight,
+                aspectRatio: panelHeight / panelWidth,
                 child: Container(
                   width: double.infinity,
                   decoration: BoxDecoration(

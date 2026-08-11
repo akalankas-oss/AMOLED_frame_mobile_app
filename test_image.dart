@@ -1,5 +1,4 @@
 import 'package:image/image.dart' as img;
-import 'dart:io';
 void main() {
   final canvas = img.Image(width: 960, height: 192, numChannels: 3);
   img.fill(canvas, color: img.ColorRgb8(0, 0, 0));

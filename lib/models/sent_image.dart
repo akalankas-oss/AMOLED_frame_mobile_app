@@ -6,7 +6,7 @@ class SentImage {
     this.thumbnailBytes,
     required this.label,
     this.deviceIndex,
-    this.needsDisplayRotation = false,
+    this.needsDisplayRotation = true,
   });
   
   Uint8List? fullBytes;
@@ -14,8 +14,8 @@ class SentImage {
   final String label;
   int? deviceIndex;
   bool selectedForRotation = false;
-  // False for all images: the pipeline no longer bakes a 90° rotation into
-  // the JPEG (the panel is landscape 960×192 and the firmware renders pixels
-  // directly), so the preview displays the image exactly as stored.
+  // Native panel bytes are stored in 192x960 portrait buffer for direct delivery.
+  // needsDisplayRotation = true un-rotates the image on phone screen previews (quarterTurns: 3)
+  // so it is displayed right side up in landscape.
   final bool needsDisplayRotation;
 }

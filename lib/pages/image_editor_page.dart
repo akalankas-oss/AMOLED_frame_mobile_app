@@ -7,8 +7,6 @@ import 'package:flutter/rendering.dart';
 import 'package:image/image.dart' as image_lib;
 
 import '../models/editor_item.dart';
-import '../utils/image_utils.dart';
-import 'text_composer_page.dart';
 
 class ImageEditorPage extends StatefulWidget {
   final Uint8List imageBytes;
@@ -352,10 +350,11 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
           format: image_lib.Format.uint8,
           numChannels: 4,
         );
-        // Encode as real JPEG — the firmware memcpys directly into the
-        // 960×192 framebuffer, so pixels must be in landscape order.
+        // Rotate 90° CW into native panel orientation (192×960). The firmware
+        // memcpys decoded pixels directly into a 192×960 framebuffer.
+        final rotated = image_lib.copyRotate(imgLib, angle: 90);
         final Uint8List jpegBytes =
-            Uint8List.fromList(image_lib.encodeJpg(imgLib, quality: 90));
+            Uint8List.fromList(image_lib.encodeJpg(rotated, quality: 90));
         if (mounted) Navigator.of(context).pop(jpegBytes);
       }
     } catch (e) {

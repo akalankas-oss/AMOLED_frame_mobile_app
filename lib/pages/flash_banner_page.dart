@@ -105,7 +105,8 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
       format: image_lib.Format.uint8,
       numChannels: 4,
     );
-    return Uint8List.fromList(image_lib.encodeJpg(landscape, quality: 90));
+    final rotated = image_lib.copyRotate(landscape, angle: 90);
+    return Uint8List.fromList(image_lib.encodeJpg(rotated, quality: 90));
   }
 
   Future<List<Uint8List>> _generateFrames() async {
