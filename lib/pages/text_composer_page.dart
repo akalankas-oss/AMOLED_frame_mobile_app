@@ -1,6 +1,7 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
-import 'image_utils.dart';
+import '../utils/image_utils.dart';
 
 class TextComposerPage extends StatefulWidget {
   const TextComposerPage({super.key});
