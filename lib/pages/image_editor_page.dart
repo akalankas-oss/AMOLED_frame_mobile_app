@@ -226,12 +226,8 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
   // Rotating it 90° up front makes it landscape-shaped, filling the frame
   // properly. The existing rotate controls still let you undo/adjust this.
   Future<void> _autoRotateIfPortrait() async {
-    final completer = Completer<ui.Image>();
-    ui.decodeImageFromList(widget.imageBytes, completer.complete);
-    final img = await completer.future;
-    if (mounted && img.height > img.width) {
-      setState(() => _bgRotation = math.pi / 2);
-    }
+    // Intentionally left empty. User requested portrait images 
+    // maintain their original orientation.
   }
 
   @override

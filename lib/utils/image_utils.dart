@@ -35,18 +35,21 @@ Uint8List fitImageToPanel(Uint8List sourceBytes) {
 
   img.Image scaled;
   if (srcAspect > dstAspect) {
-    // Source is relatively wider than the target -- match height, crop width.
-    scaled = img.copyResize(decoded, height: targetHeight);
-  } else {
-    // Source is relatively taller than the target -- match width, crop height.
+    // Source is relatively wider than the target -- match width.
     scaled = img.copyResize(decoded, width: targetWidth);
+  } else {
+    // Source is relatively taller than the target -- match height.
+    scaled = img.copyResize(decoded, height: targetHeight);
   }
 
-  final xOffset = ((scaled.width - targetWidth) / 2).round();
-  final yOffset = ((scaled.height - targetHeight) / 2).round();
-  final cropped = img.copyCrop(scaled, x: xOffset, y: yOffset, width: targetWidth, height: targetHeight);
+  final xOffset = ((targetWidth - scaled.width) / 2).round();
+  final yOffset = ((targetHeight - scaled.height) / 2).round();
+  
+  final canvas = img.Image(width: targetWidth, height: targetHeight, numChannels: 3);
+  img.fill(canvas, color: img.ColorRgb8(0, 0, 0));
+  img.compositeImage(canvas, scaled, dstX: xOffset, dstY: yOffset);
 
-  return Uint8List.fromList(img.encodeJpg(cropped, quality: 90));
+  return Uint8List.fromList(img.encodeJpg(canvas, quality: 90));
 }
 
 // Renders text on the panel's native landscape canvas
