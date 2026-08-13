@@ -1,14 +1,12 @@
 import 'dart:async';
-import 'dart:math' show min;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:image/image.dart' as image_lib;
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../ble/frame_ble_service.dart';
 import '../ble/frame_connection.dart';
-import '../ble/frame_protocol.dart';
 import '../models/sent_image.dart';
 import '../utils/image_utils.dart';
 import 'flash_banner_page.dart';
@@ -24,60 +22,8 @@ class FramePage extends StatefulWidget {
 
 class _FramePageState extends State<FramePage> {
   FrameConnState _connState = FrameConnState.disconnected;
-  BluetoothDevice? _device;
-  BluetoothCharacteristic? _rxChar;
-  BluetoothCharacteristic? _txChar;
-  StreamSubscription<List<ScanResult>>? _scanSub;
-  StreamSubscription<BluetoothConnectionState>? _connSub;
-  StreamSubscription<List<int>>? _notifySub;
-  int _mtu = 23;
-  // Sequence-token map: each BLE command that awaits an ACK_OK gets its own
-  // numbered Completer. _onNotify delivers to the oldest pending token (FIFO),
-  // which is safe because _bleQueue enforces strictly sequential execution.
-  int _bleSeqToken = 0;
-  final Map<int, Completer<int>> _pendingCompleters = {};
-
-  bool _awaitingDownloadHeader = false;
-  int _downloadExpectedSize = 0;
-  final BytesBuilder _downloadBuilder = BytesBuilder();
-  Completer<Uint8List>? _pendingDownloadCompleter;
-
   bool _busy = false;
-
-  final List<Future<void> Function()> _bleQueue = [];
-  bool _bleProcessing = false;
-
-  Future<T> _enqueueBleTask<T>(Future<T> Function() task, {bool highPriority = false}) {
-    final completer = Completer<T>();
-    final taskWrapper = () async {
-      try {
-        final result = await task();
-        if (!completer.isCompleted) completer.complete(result);
-      } catch (e) {
-        if (!completer.isCompleted) completer.completeError(e);
-      }
-    };
-    if (highPriority) {
-      _bleQueue.insert(0, taskWrapper);
-    } else {
-      _bleQueue.add(taskWrapper);
-    }
-    _processBleQueue();
-    return completer.future;
-  }
-
-  Future<void> _processBleQueue() async {
-    if (_bleProcessing) return;
-    _bleProcessing = true;
-    while (_bleQueue.isNotEmpty) {
-      final task = _bleQueue.removeAt(0);
-      try { await task(); } catch (e) { print('BLE Task Error: $e'); }
-    }
-    _bleProcessing = false;
-  }
-
   bool _syncing = false;
-  bool _syncedOnce = false;
   double _brightness = 255;
   final List<String> _log = [];
 
@@ -86,19 +32,30 @@ class _FramePageState extends State<FramePage> {
   double _rotationSeconds = 5;
   bool _rotationActive = false;
 
+  final FrameBleService _bleService = FrameBleService.instance;
+
   @override
   void initState() {
     super.initState();
+    _bleService.onLog = _addLog;
+    _bleService.connStateNotifier.addListener(_onConnStateChanged);
     _connectToFrame();
   }
 
   @override
   void dispose() {
-    _scanSub?.cancel();
-    _connSub?.cancel();
-    _notifySub?.cancel();
-    FlutterBluePlus.stopScan();
+    _bleService.connStateNotifier.removeListener(_onConnStateChanged);
     super.dispose();
+  }
+
+  void _onConnStateChanged() {
+    final newState = _bleService.connState;
+    if (newState != _connState) {
+      setState(() => _connState = newState);
+      if (newState == FrameConnState.connected) {
+        _syncFromDevice();
+      }
+    }
   }
 
   void _addLog(String line) {
@@ -119,160 +76,11 @@ class _FramePageState extends State<FramePage> {
   }
 
   Future<void> _connectToFrame() async {
-    if (_connState == FrameConnState.scanning || _connState == FrameConnState.connecting) {
-      return;
-    }
-    if (!await _ensurePermissions()) {
-      _addLog('Bluetooth/location permissions denied');
-      return;
-    }
-
-    setState(() => _connState = FrameConnState.scanning);
-    _addLog('Scanning for AMOLED-Frame...');
-
-    try {
-      await _scanSub?.cancel();
-      _scanSub = FlutterBluePlus.onScanResults.listen((results) async {
-        for (final r in results) {
-          if (r.device.platformName == 'AMOLED-Frame') {
-            await FlutterBluePlus.stopScan();
-            await _scanSub?.cancel();
-            await _connectDevice(r.device);
-            return;
-          }
-        }
-      });
-      await FlutterBluePlus.startScan(
-        withServices: [nusServiceUuid],
-        timeout: const Duration(seconds: 10),
-      );
-      
-      // Wait for the scan to finish
-      await FlutterBluePlus.isScanning.where((scanning) => !scanning).first;
-      
-      if (mounted && _connState == FrameConnState.scanning) {
-        _addLog('Scan timed out. Device not found.');
-        setState(() => _connState = FrameConnState.disconnected);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Scan timed out. Device not found.')),
-          );
-        }
-      }
-    } catch (e) {
-      _addLog('Scan failed: $e');
-      if (mounted) {
-        setState(() => _connState = FrameConnState.disconnected);
-      }
-    }
-  }
-
-  Future<void> _connectDevice(BluetoothDevice device) async {
-    setState(() => _connState = FrameConnState.connecting);
-    _addLog('Found device, connecting...');
-    _device = device;
-
-    _connSub?.cancel();
-    _connSub = device.connectionState.listen((state) {
-      if (state == BluetoothConnectionState.disconnected) {
-        _addLog('Disconnected');
-        _notifySub?.cancel();
-        // Cancel all pending ACK completers so callers immediately get an
-        // error rather than hanging until their timeout fires.
-        for (final c in _pendingCompleters.values) {
-          if (!c.isCompleted) c.completeError(Exception('BLE disconnected'));
-        }
-        _pendingCompleters.clear();
-        setState(() {
-          _connState = FrameConnState.disconnected;
-          _rxChar = null;
-          _txChar = null;
-          _syncedOnce = false;
-        });
-      }
-    });
-
-    try {
-      await device.connect(timeout: const Duration(seconds: 10));
-      try {
-        _mtu = await device.requestMtu(517);
-      } catch (_) {
-        _mtu = 23;
-      }
-
-      final services = await device.discoverServices();
-      final nus = services.firstWhere((s) => s.uuid == nusServiceUuid);
-      _rxChar = nus.characteristics.firstWhere((c) => c.uuid == rxCharUuid);
-      _txChar = nus.characteristics.firstWhere((c) => c.uuid == txCharUuid);
-
-      await _txChar!.setNotifyValue(true);
-      _notifySub = _txChar!.lastValueStream.listen(_onNotify);
-
-      _addLog('Connected to ${device.platformName}');
-      setState(() => _connState = FrameConnState.connected);
-      await _syncFromDevice();
-    } catch (e) {
-      _addLog('Connect failed: $e');
-      setState(() => _connState = FrameConnState.disconnected);
-    }
-  }
-
-  /// Mint a fresh sequence token and register a Completer for it.
-  /// The caller MUST remove the token from [_pendingCompleters] in a finally
-  /// block (even on timeout / error) to prevent stale entries.
-  (int, Completer<int>) _acquireCompleter() {
-    final token = ++_bleSeqToken;
-    final completer = Completer<int>();
-    _pendingCompleters[token] = completer;
-    return (token, completer);
-  }
-
-  void _onNotify(List<int> value) {
-    if (value.isEmpty) return;
-
-    if (_awaitingDownloadHeader) {
-      if (value.length >= 5 && value[0] == downloadHeaderStatus) {
-        _downloadExpectedSize = value[1] | (value[2] << 8) | (value[3] << 16) | (value[4] << 24);
-        _awaitingDownloadHeader = false;
-        _downloadBuilder.clear();
-        if (_downloadExpectedSize == 0) {
-          _pendingDownloadCompleter?.complete(Uint8List(0));
-        }
-      } else {
-        _pendingDownloadCompleter?.completeError('bad download response (0x${value[0].toRadixString(16)})');
-        _awaitingDownloadHeader = false;
-      }
-      return;
-    }
-
-    if (_downloadExpectedSize > 0 && _downloadBuilder.length < _downloadExpectedSize) {
-      _downloadBuilder.add(value);
-      if (_downloadBuilder.length >= _downloadExpectedSize) {
-        final bytes = _downloadBuilder.toBytes();
-        _downloadExpectedSize = 0;
-        _pendingDownloadCompleter?.complete(bytes);
-      }
-      return;
-    }
-
-    final status = value[0];
-    _addLog('Device: ${statusNames[status] ?? 'unknown (0x${status.toRadixString(16)})'}');
-
-    // Deliver ACK_OK to the oldest pending completer (FIFO). This is safe
-    // because _bleQueue enforces strictly sequential execution — there is
-    // exactly one in-flight command at any given time.
-    if (status == 0x06 && value.length >= 5 && _pendingCompleters.isNotEmpty) {
-      final token = _pendingCompleters.keys.reduce(min);
-      final completer = _pendingCompleters.remove(token)!;
-      if (!completer.isCompleted) {
-        final index = value[1] | (value[2] << 8) | (value[3] << 16) | (value[4] << 24);
-        completer.complete(index);
-      }
-    }
+    await _bleService.connectToFrame(ensurePermissions: _ensurePermissions);
   }
 
   Future<void> _syncFromDevice() async {
-    if (_rxChar == null) return;
+    if (_bleService.connState != FrameConnState.connected) return;
     setState(() {
       _busy = true;
       _syncing = true;
@@ -286,33 +94,24 @@ class _FramePageState extends State<FramePage> {
         setState(() {
           _busy = false;
           _syncing = false;
-          _syncedOnce = true;
         });
       }
     }
   }
 
   Future<void> _syncBrightnessFromDevice() async {
-    final (token, completer) = _acquireCompleter();
     try {
-      await _sendChunked(buildHeader(getBrightnessCmdMagic, 0));
-      final level = await completer.future.timeout(const Duration(seconds: 5));
-      setState(() => _brightness = level.toDouble().clamp(0, 255));
+      final level = await _bleService.syncBrightnessFromDevice();
+      setState(() => _brightness = level);
       _addLog('Synced brightness: ${(_brightness / 255 * 100).round()}%');
     } catch (e) {
       _addLog('Could not sync brightness: $e');
-    } finally {
-      _pendingCompleters.remove(token);
     }
   }
 
   Future<void> _syncImageListFromDevice() async {
-    final (token, completer) = _acquireCompleter();
     try {
-      await _sendChunked(buildHeader(listCountCmdMagic, 0));
-      final count = await completer.future.timeout(const Duration(seconds: 5));
-      _pendingCompleters.remove(token); // resolved — remove before next await
-
+      final count = await _bleService.syncImageListCountFromDevice();
       final known = _sentImages.map((i) => i.deviceIndex).whereType<int>().toSet();
       final missing = [for (int i = 0; i < count; i++) if (!known.contains(i)) i];
       if (missing.isEmpty) {
@@ -324,7 +123,7 @@ class _FramePageState extends State<FramePage> {
       for (final index in missing) {
         Uint8List? thumb;
         try {
-          thumb = await _downloadThumbnail(index);
+          thumb = await _bleService.downloadThumbnail(index);
         } catch (e) {
           _addLog('Could not download thumbnail for image $index: $e');
         }
@@ -335,48 +134,26 @@ class _FramePageState extends State<FramePage> {
       _addLog('Sync complete');
     } catch (e) {
       _addLog('Could not sync image list: $e');
-    } finally {
-      _pendingCompleters.remove(token);
     }
   }
 
   Future<void> _syncPlaylistFromDevice() async {
-    final (token, completer) = _acquireCompleter();
     try {
-      await _sendChunked(buildHeader(getPlaylistCmdMagic, 0));
-      final packed = await completer.future.timeout(const Duration(seconds: 5));
-      _pendingCompleters.remove(token); // resolved — remove before next await
-
-      final active = (packed & 0x80000000) != 0;
-      final interval = packed & 0x7FFFFFFF;
-
-      final raw = await _downloadRaw(downloadPlaylistCmdMagic, 0);
-      final playlistIndices = <int>{};
-      for (int i = 0; i + 4 <= raw.length; i += 4) {
-        playlistIndices.add(raw[i] | (raw[i + 1] << 8) | (raw[i + 2] << 16) | (raw[i + 3] << 24));
-      }
-
+      final res = await _bleService.syncPlaylistFromDevice();
       setState(() {
         for (final image in _sentImages) {
-          image.selectedForRotation = image.deviceIndex != null && playlistIndices.contains(image.deviceIndex);
+          image.selectedForRotation = image.deviceIndex != null && res.playlistIndices.contains(image.deviceIndex);
         }
-        if (interval >= 2 && interval <= 30) {
-          _rotationSeconds = interval.toDouble();
+        if (res.interval >= 2 && res.interval <= 30) {
+          _rotationSeconds = res.interval.toDouble();
         }
-        _rotationActive = active;
+        _rotationActive = res.active;
       });
     } catch (e) {
       _addLog('Could not sync rotation state: $e');
-    } finally {
-      _pendingCompleters.remove(token);
     }
   }
 
-  // Simple, original behavior: the picked photo is added directly, with no
-  // text/emoji/sticker editor. Still runs through fitImageToPanel() so the
-  // stored bytes are in the panel's expected format — makeThumbnail() (and
-  // the BLE upload pipeline) need that; without it, raw multi-megapixel
-  // gallery photos produced garbled/corrupted thumbnails.
   Future<void> _pickImage() async {
     final file = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (file == null) return;
@@ -397,22 +174,12 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  // Large gallery photos (many megapixels) being redrawn on every touch-move
-  // frame during item dragging can cause enough jank to make emoji/sticker
-  // dragging feel broken or laggy. The panel only needs 192x960 worth of
-  // detail, so downscaling before editing keeps things smooth without any
-  // visible quality loss on the final panel.
   Future<Uint8List> _downscaleForEditing(Uint8List bytes, {int maxDimension = 1000}) async {
-    // Use image_lib (not the Flutter codec) so we can call bakeOrientation()
-    // reliably regardless of platform. Without this, portrait gallery photos
-    // open sideways in the editor because the Flutter codec may or may not
-    // auto-apply the EXIF orientation depending on the OS version.
     final rawDecoded = image_lib.decodeImage(bytes);
-    if (rawDecoded == null) return bytes; // Fallback: pass original bytes unchanged
+    if (rawDecoded == null) return bytes;
     final oriented = image_lib.bakeOrientation(rawDecoded);
 
     if (oriented.width <= maxDimension && oriented.height <= maxDimension) {
-      // No resize needed — just re-encode with orientation baked in.
       return Uint8List.fromList(image_lib.encodeJpg(oriented, quality: 92));
     }
     final scale = maxDimension / (oriented.width > oriented.height ? oriented.width : oriented.height);
@@ -424,22 +191,11 @@ class _FramePageState extends State<FramePage> {
     return Uint8List.fromList(image_lib.encodeJpg(resized, quality: 92));
   }
 
-  // Full editing flow: pick a photo from the gallery, then open the
-  // text/emoji/sticker editor on it before adding it to the list.
   Future<void> _createImageWithEditing() async {
     final file = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (file == null) return;
     final rawBytes = await file.readAsBytes();
     try {
-      // Pass a downscaled copy of the picked photo to the editor — do NOT
-      // pre-process it with fitImageToPanel() here, since that function
-      // center-crops to the panel's aspect ratio, cutting off the edges
-      // before the editor even gets a chance to show the whole photo.
-      // The editor's own canvas (fixed at 192x960, BoxFit.contain) shrinks
-      // the entire photo to fit with nothing cut off. From there, the
-      // "Move/zoom photo" button lets you pinch-zoom (or use the +/-
-      // buttons) to zoom in on any specific part if you don't want the
-      // whole photo.
       final bytes = await _downscaleForEditing(rawBytes);
       if (!mounted) return;
       final editedBytes = await Navigator.of(context).push<Uint8List>(
@@ -458,10 +214,6 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  // Opens the banner composer, then queues every generated frame as an
-  // image, already selected for rotation. Frames play back through the
-  // existing rotation/BLE pipeline — press "Send Selected to Device" then
-  // "Start Rotation" to actually show the banner on the panel.
   Future<void> _openFlashBanner() async {
     final frames = await Navigator.of(context).push<List<Uint8List>>(
       MaterialPageRoute(builder: (_) => const FlashBannerPage()),
@@ -499,74 +251,8 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  Future<void> _sendChunked(Uint8List payload) async {
-    final chunkSize = (_mtu - 3).clamp(20, 500);
-    for (int offset = 0; offset < payload.length; offset += chunkSize) {
-      // Re-check connection on every chunk: a disconnect mid-upload would
-      // otherwise throw a null-dereference instead of a clear message.
-      if (_rxChar == null) throw Exception('Disconnected during transfer');
-      final end = (offset + chunkSize < payload.length) ? offset + chunkSize : payload.length;
-      await _rxChar!.write(payload.sublist(offset, end), withoutResponse: false);
-    }
-  }
-
-  Future<int> _uploadImageGetIndex(Uint8List jpeg) async {
-    final (token, completer) = _acquireCompleter();
-    try {
-      final payload = Uint8List.fromList(buildHeader(jpegHeaderMagic, jpeg.length) + jpeg);
-      await _sendChunked(payload);
-      return await completer.future.timeout(const Duration(seconds: 5));
-    } finally {
-      _pendingCompleters.remove(token);
-    }
-  }
-
-  Future<void> _uploadThumbnail(Uint8List thumbJpeg) async {
-    try {
-      final payload = Uint8List.fromList(buildHeader(thumbnailHeaderMagic, thumbJpeg.length) + thumbJpeg);
-      await _sendChunked(payload);
-    } catch (e) {
-      _addLog('Thumbnail upload failed: $e');
-    }
-  }
-
-  Future<int> _uploadImageWithThumbnail(SentImage image) async {
-    final index = await _uploadImageGetIndex(image.fullBytes!);
-    image.thumbnailBytes ??= makeThumbnail(image.fullBytes!);
-    await _uploadThumbnail(image.thumbnailBytes!);
-    return index;
-  }
-
-  Future<Uint8List> _downloadRaw(int magic, int secondField, {Duration timeout = const Duration(seconds: 10)}) async {
-    if (_rxChar == null) throw Exception('Not connected');
-    _awaitingDownloadHeader = true;
-    _downloadBuilder.clear();
-    _downloadExpectedSize = 0;
-    _pendingDownloadCompleter = Completer<Uint8List>();
-    try {
-      await _sendChunked(buildHeader(magic, secondField));
-      return await _pendingDownloadCompleter!.future.timeout(timeout);
-    } finally {
-      _awaitingDownloadHeader = false;
-      _pendingDownloadCompleter = null;
-    }
-  }
-
-  Future<Uint8List> _downloadImage(int index) => _downloadRaw(downloadCmdMagic, index, timeout: const Duration(seconds: 30));
-  Future<Uint8List> _downloadThumbnail(int index) => _downloadRaw(downloadThumbCmdMagic, index);
-
-  Future<void> _sendFormatCommand() async {
-    final (token, completer) = _acquireCompleter();
-    try {
-      await _sendChunked(buildHeader(formatCmdMagic, 0));
-      await completer.future.timeout(const Duration(seconds: 30));
-    } finally {
-      _pendingCompleters.remove(token);
-    }
-  }
-
   Future<void> _showImageEntry(int index) async {
-    if (_rxChar == null || _busy) return;
+    if (_bleService.connState != FrameConnState.connected || _busy) return;
     final image = _sentImages[index];
     setState(() {
       _activeIndex = index;
@@ -577,12 +263,12 @@ class _FramePageState extends State<FramePage> {
       if (image.deviceIndex != null) {
         deviceIndex = image.deviceIndex!;
       } else if (image.fullBytes != null) {
-        deviceIndex = await _uploadImageWithThumbnail(image);
+        deviceIndex = await _bleService.uploadImageWithThumbnail(image);
         setState(() => image.deviceIndex = deviceIndex);
       } else {
         throw Exception('No data available');
       }
-      await _sendChunked(buildHeader(showIndexCmdMagic, deviceIndex));
+      await _bleService.showImageEntry(deviceIndex);
     } catch (e) {
       _addLog('Show failed: $e');
     } finally {
@@ -605,16 +291,16 @@ class _FramePageState extends State<FramePage> {
     });
   }
 
-  Future<void> _sendSelectedToDevice() => _enqueueBleTask(_doSendSelectedToDevice);
+  Future<void> _sendSelectedToDevice() => _bleService.enqueueBleTask(_doSendSelectedToDevice);
   Future<void> _doSendSelectedToDevice() async {
-    if (_rxChar == null || _busy) return;
+    if (_bleService.connState != FrameConnState.connected || _busy) return;
     final toSend = _sentImages.where((i) => i.selectedForRotation && i.deviceIndex == null && i.fullBytes != null).toList();
     if (toSend.isEmpty) return;
 
     setState(() => _busy = true);
     try {
       for (final image in toSend) {
-        final index = await _uploadImageWithThumbnail(image);
+        final index = await _bleService.uploadImageWithThumbnail(image);
         setState(() => image.deviceIndex = index);
       }
       _addLog('Sent ${toSend.length} image(s) to device');
@@ -625,28 +311,24 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  Future<void> _startRotation() => _enqueueBleTask(_doStartRotation);
+  Future<void> _startRotation() => _bleService.enqueueBleTask(_doStartRotation);
   Future<void> _doStartRotation() async {
     final selected = _sentImages.where((i) => i.selectedForRotation).toList();
-    if (selected.isEmpty || _rxChar == null) return;
+    if (selected.isEmpty || _bleService.connState != FrameConnState.connected) return;
 
     setState(() => _busy = true);
     try {
       for (final image in selected) {
         if (image.deviceIndex == null && image.fullBytes != null) {
-          final index = await _uploadImageWithThumbnail(image);
+          final index = await _bleService.uploadImageWithThumbnail(image);
           setState(() => image.deviceIndex = index);
         }
       }
 
-      final usable = selected.where((i) => i.deviceIndex != null).toList();
+      final usable = selected.where((i) => i.deviceIndex != null).map((i) => i.deviceIndex!).toList();
       if (usable.isEmpty) return;
 
-      await _sendChunked(buildHeader(playlistClearMagic, 0));
-      for (final image in usable) {
-        await _sendChunked(buildHeader(playlistAddMagic, image.deviceIndex!));
-      }
-      await _sendChunked(buildHeader(playlistStartMagic, _rotationSeconds.round()));
+      await _bleService.startRotation(usable, _rotationSeconds.round());
       setState(() => _rotationActive = true);
     } catch (e) {
       _addLog('Start rotation failed: $e');
@@ -655,27 +337,23 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  Future<void> _stopRotation() => _enqueueBleTask(_doStopRotation, highPriority: true);
+  Future<void> _stopRotation() => _bleService.enqueueBleTask(_doStopRotation, highPriority: true);
   Future<void> _doStopRotation() async {
-    if (_rxChar == null) return;
+    if (_bleService.connState != FrameConnState.connected) return;
     setState(() => _busy = true);
     try {
-      await _sendChunked(buildHeader(playlistStopMagic, 0));
+      await _bleService.stopRotation();
       setState(() => _rotationActive = false);
     } catch (e) {
       _addLog('Stop rotation failed: $e');
     } finally {
-      // Note: playlistStop sends a fire-and-forget command — the device does
-      // not send an ACK_OK for stop, so there is no completer to clean up here.
-      // (The old code incorrectly nulled _pendingIndexCompleter, which could
-      // have silently cancelled an unrelated in-flight upload's completer.)
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _formatDevice() => _enqueueBleTask(_doFormatDevice, highPriority: true);
+  Future<void> _formatDevice() => _bleService.enqueueBleTask(_doFormatDevice, highPriority: true);
   Future<void> _doFormatDevice() async {
-    if (_rxChar == null || _busy) return;
+    if (_bleService.connState != FrameConnState.connected || _busy) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -691,7 +369,7 @@ class _FramePageState extends State<FramePage> {
 
     setState(() => _busy = true);
     try {
-      await _sendFormatCommand();
+      await _bleService.sendFormatCommand();
       setState(() {
         _sentImages.clear();
         _activeIndex = null;
@@ -704,10 +382,10 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  Future<void> _deleteSelectedImages() => _enqueueBleTask(_doDeleteSelectedImages);
+  Future<void> _deleteSelectedImages() => _bleService.enqueueBleTask(_doDeleteSelectedImages);
   Future<void> _doDeleteSelectedImages() async {
     final toDelete = _sentImages.where((i) => i.selectedForRotation).toList();
-    if (toDelete.isEmpty || _rxChar == null || _busy) return;
+    if (toDelete.isEmpty || _bleService.connState != FrameConnState.connected || _busy) return;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -743,17 +421,14 @@ class _FramePageState extends State<FramePage> {
 
     setState(() => _busy = true);
     try {
-      // Phase 1: Download any on-device images we intend to keep so we
-      // have local copies before the irreversible format step.
       _addLog('Downloading ${toKeep.length} image(s) before format...');
       for (final image in toKeep) {
         if (image.fullBytes == null && image.deviceIndex != null) {
-          image.fullBytes = await _downloadImage(image.deviceIndex!);
+          image.fullBytes = await _bleService.downloadImage(image.deviceIndex!);
         }
       }
 
-      // Phase 2: Irreversible — wipe the device storage.
-      await _sendFormatCommand();
+      await _bleService.sendFormatCommand();
 
       setState(() {
         _sentImages.clear();
@@ -761,20 +436,17 @@ class _FramePageState extends State<FramePage> {
         _rotationActive = false;
       });
 
-      // Phase 3: Re-upload the images we kept. Track failures so we can
-      // inform the user exactly which images were not recovered.
       final List<String> failedLabels = [];
       for (final image in toKeep) {
         if (image.fullBytes != null) {
           try {
-            image.deviceIndex = await _uploadImageWithThumbnail(image);
+            image.deviceIndex = await _bleService.uploadImageWithThumbnail(image);
             setState(() {
               _sentImages.add(image);
             });
           } catch (e) {
             _addLog('Failed to re-upload "${image.label}" during delete: $e');
             failedLabels.add(image.label);
-            // Don't break — try to re-upload the remaining images.
           }
         }
       }
@@ -784,10 +456,9 @@ class _FramePageState extends State<FramePage> {
       });
 
       if (_activeIndex != null && neighbor!.deviceIndex != null) {
-        await _sendChunked(buildHeader(showIndexCmdMagic, neighbor.deviceIndex!));
+        await _bleService.showImageEntry(neighbor.deviceIndex!);
       }
 
-      // Inform the user if any images could not be recovered after the format.
       if (failedLabels.isNotEmpty && mounted) {
         showDialog<void>(
           context: context,
@@ -821,11 +492,11 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  Future<void> _sendBrightness(int level) => _enqueueBleTask(() => _doSendBrightness(level), highPriority: true);
+  Future<void> _sendBrightness(int level) => _bleService.enqueueBleTask(() => _doSendBrightness(level), highPriority: true);
   Future<void> _doSendBrightness(int level) async {
-    if (_rxChar == null) return;
+    if (_bleService.connState != FrameConnState.connected) return;
     try {
-      await _sendChunked(buildHeader(brightnessCmdMagic, level));
+      await _bleService.sendBrightness(level);
     } catch (e) {
       _addLog('Brightness failed: $e');
     }

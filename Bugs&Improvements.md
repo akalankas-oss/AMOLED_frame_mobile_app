@@ -31,16 +31,18 @@ Comprehensive audit and analysis of the Flutter mobile application (`AMOLED_fram
 ---
 
 ### 4. Code Duplication & Bypassed `FrameBleService` Singleton
-- **Location:** [`lib/pages/frame_page.dart`](AMOLED_frame_mobile_app/lib/pages/frame_page.dart) vs [`lib/ble/frame_ble_service.dart`](AMOLED_frame_mobile_app/lib/ble/frame_ble_service.dart)
-- **Problem:** `_FramePageState` duplicate-implements almost all BLE logic (`_bleQueue`, `_enqueueBleTask`, `_sendChunked`, `_uploadImageGetIndex`, `_downloadRaw`, `_onNotify`) locally inside the widget state, completely bypassing the `FrameBleService` class created in `lib/ble/frame_ble_service.dart`. This causes duplicated bugs, state fragmentation, and makes testing or reusing BLE operations across pages impossible.
-- **Fix:** Refactor `_FramePageState` to delegate all BLE commands, state management, and notifications exclusively to `FrameBleService`.
+- **Status:** **Fixed** (`FrameBleService` singleton expanded to encapsulate all BLE operations and state; `_FramePageState` refactored to delegate exclusively to `FrameBleService.instance`)
+- **Location:** [`lib/pages/frame_page.dart`](AMOLED_frame_mobile_app/lib/pages/frame_page.dart) & [`lib/ble/frame_ble_service.dart`](AMOLED_frame_mobile_app/lib/ble/frame_ble_service.dart)
+- **Problem:** `_FramePageState` duplicate-implemented almost all BLE logic (`_bleQueue`, `_enqueueBleTask`, `_sendChunked`, `_uploadImageGetIndex`, `_downloadRaw`, `_onNotify`) locally inside the widget state, completely bypassing the `FrameBleService` class created in `lib/ble/frame_ble_service.dart`. This caused duplicated bugs, state fragmentation, and made testing or reusing BLE operations across pages impossible.
+- **Fix:** Expanded `FrameBleService` into a full-featured, single-source-of-truth service singleton handling device connection, GATT notifications, task queueing, chunked transfers, and high-level protocol methods. Refactored `_FramePageState` to delegate all BLE commands, state management, and notifications exclusively to `FrameBleService.instance`.
 
 ---
 
 ### 5. Stale Queued Tasks Persist Across BLE Disconnections
-- **Location:** [`lib/pages/frame_page.dart` (lines 42–72, 171–183)](AMOLED_frame_mobile_app/lib/pages/frame_page.dart#L42-L72)
-- **Problem:** When `BluetoothConnectionState.disconnected` fires, `_rxChar` and `_txChar` are set to `null`, but `_bleQueue` is never cleared. Pending queued tasks remain in `_bleQueue` and will attempt execution either immediately upon reconnect or throw unhandled disconnect exceptions mid-loop.
-- **Fix:** In the connection listener (`disconnected` handler), clear `_bleQueue`, complete any active completers with an error (`DisconnectedException`), and reset `_bleProcessing` state cleanly.
+- **Status:** **Fixed** (Centralized `_clearQueueAndRejectPending` in `FrameBleService` clears task queue and fails pending completers immediately on disconnect)
+- **Location:** [`lib/ble/frame_ble_service.dart`](AMOLED_frame_mobile_app/lib/ble/frame_ble_service.dart)
+- **Problem:** When `BluetoothConnectionState.disconnected` fired, pending queued tasks remained in `_bleQueue` and would attempt execution either upon reconnect or throw unhandled disconnect exceptions mid-loop.
+- **Fix:** `FrameBleService`'s disconnect listener now calls `_clearQueueAndRejectPending()`, which empties `bleQueue`, resets `bleProcessing` state, and immediately fails all pending response completers with an exception.
 
 ---
 
