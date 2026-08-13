@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' show min;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -30,7 +31,11 @@ class _FramePageState extends State<FramePage> {
   StreamSubscription<BluetoothConnectionState>? _connSub;
   StreamSubscription<List<int>>? _notifySub;
   int _mtu = 23;
-  Completer<int>? _pendingIndexCompleter;
+  // Sequence-token map: each BLE command that awaits an ACK_OK gets its own
+  // numbered Completer. _onNotify delivers to the oldest pending token (FIFO),
+  // which is safe because _bleQueue enforces strictly sequential execution.
+  int _bleSeqToken = 0;
+  final Map<int, Completer<int>> _pendingCompleters = {};
 
   bool _awaitingDownloadHeader = false;
   int _downloadExpectedSize = 0;
@@ -172,6 +177,12 @@ class _FramePageState extends State<FramePage> {
       if (state == BluetoothConnectionState.disconnected) {
         _addLog('Disconnected');
         _notifySub?.cancel();
+        // Cancel all pending ACK completers so callers immediately get an
+        // error rather than hanging until their timeout fires.
+        for (final c in _pendingCompleters.values) {
+          if (!c.isCompleted) c.completeError(Exception('BLE disconnected'));
+        }
+        _pendingCompleters.clear();
         setState(() {
           _connState = FrameConnState.disconnected;
           _rxChar = null;
@@ -206,6 +217,16 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
+  /// Mint a fresh sequence token and register a Completer for it.
+  /// The caller MUST remove the token from [_pendingCompleters] in a finally
+  /// block (even on timeout / error) to prevent stale entries.
+  (int, Completer<int>) _acquireCompleter() {
+    final token = ++_bleSeqToken;
+    final completer = Completer<int>();
+    _pendingCompleters[token] = completer;
+    return (token, completer);
+  }
+
   void _onNotify(List<int> value) {
     if (value.isEmpty) return;
 
@@ -237,10 +258,16 @@ class _FramePageState extends State<FramePage> {
     final status = value[0];
     _addLog('Device: ${statusNames[status] ?? 'unknown (0x${status.toRadixString(16)})'}');
 
-    final completer = _pendingIndexCompleter;
-    if (status == 0x06 && value.length >= 5 && completer != null && !completer.isCompleted) {
-      final index = value[1] | (value[2] << 8) | (value[3] << 16) | (value[4] << 24);
-      completer.complete(index);
+    // Deliver ACK_OK to the oldest pending completer (FIFO). This is safe
+    // because _bleQueue enforces strictly sequential execution — there is
+    // exactly one in-flight command at any given time.
+    if (status == 0x06 && value.length >= 5 && _pendingCompleters.isNotEmpty) {
+      final token = _pendingCompleters.keys.reduce(min);
+      final completer = _pendingCompleters.remove(token)!;
+      if (!completer.isCompleted) {
+        final index = value[1] | (value[2] << 8) | (value[3] << 16) | (value[4] << 24);
+        completer.complete(index);
+      }
     }
   }
 
@@ -266,25 +293,25 @@ class _FramePageState extends State<FramePage> {
   }
 
   Future<void> _syncBrightnessFromDevice() async {
+    final (token, completer) = _acquireCompleter();
     try {
-      _pendingIndexCompleter = Completer<int>();
       await _sendChunked(buildHeader(getBrightnessCmdMagic, 0));
-      final level = await _pendingIndexCompleter!.future.timeout(const Duration(seconds: 5));
+      final level = await completer.future.timeout(const Duration(seconds: 5));
       setState(() => _brightness = level.toDouble().clamp(0, 255));
       _addLog('Synced brightness: ${(_brightness / 255 * 100).round()}%');
     } catch (e) {
       _addLog('Could not sync brightness: $e');
     } finally {
-      _pendingIndexCompleter = null;
+      _pendingCompleters.remove(token);
     }
   }
 
   Future<void> _syncImageListFromDevice() async {
+    final (token, completer) = _acquireCompleter();
     try {
-      _pendingIndexCompleter = Completer<int>();
       await _sendChunked(buildHeader(listCountCmdMagic, 0));
-      final count = await _pendingIndexCompleter!.future.timeout(const Duration(seconds: 5));
-      _pendingIndexCompleter = null;
+      final count = await completer.future.timeout(const Duration(seconds: 5));
+      _pendingCompleters.remove(token); // resolved — remove before next await
 
       final known = _sentImages.map((i) => i.deviceIndex).whereType<int>().toSet();
       final missing = [for (int i = 0; i < count; i++) if (!known.contains(i)) i];
@@ -309,16 +336,16 @@ class _FramePageState extends State<FramePage> {
     } catch (e) {
       _addLog('Could not sync image list: $e');
     } finally {
-      _pendingIndexCompleter = null;
+      _pendingCompleters.remove(token);
     }
   }
 
   Future<void> _syncPlaylistFromDevice() async {
+    final (token, completer) = _acquireCompleter();
     try {
-      _pendingIndexCompleter = Completer<int>();
       await _sendChunked(buildHeader(getPlaylistCmdMagic, 0));
-      final packed = await _pendingIndexCompleter!.future.timeout(const Duration(seconds: 5));
-      _pendingIndexCompleter = null;
+      final packed = await completer.future.timeout(const Duration(seconds: 5));
+      _pendingCompleters.remove(token); // resolved — remove before next await
 
       final active = (packed & 0x80000000) != 0;
       final interval = packed & 0x7FFFFFFF;
@@ -341,7 +368,7 @@ class _FramePageState extends State<FramePage> {
     } catch (e) {
       _addLog('Could not sync rotation state: $e');
     } finally {
-      _pendingIndexCompleter = null;
+      _pendingCompleters.remove(token);
     }
   }
 
@@ -464,17 +491,11 @@ class _FramePageState extends State<FramePage> {
     );
     if (bytes != null) {
       if (!mounted) return;
-      final editedBytes = await Navigator.of(context).push<Uint8List>(
-        MaterialPageRoute(builder: (_) => ImageEditorPage(imageBytes: bytes)),
-      );
-
-      if (editedBytes != null) {
-        final thumb = makeThumbnail(editedBytes);
-        setState(() {
-          _sentImages.add(SentImage(fullBytes: editedBytes, thumbnailBytes: thumb, label: 'Image ${_sentImages.length + 1}'));
-          _activeIndex = _sentImages.length - 1;
-        });
-      }
+      final thumb = makeThumbnail(bytes);
+      setState(() {
+        _sentImages.add(SentImage(fullBytes: bytes, thumbnailBytes: thumb, label: 'Text ${_sentImages.length + 1}'));
+        _activeIndex = _sentImages.length - 1;
+      });
     }
   }
 
@@ -490,13 +511,13 @@ class _FramePageState extends State<FramePage> {
   }
 
   Future<int> _uploadImageGetIndex(Uint8List jpeg) async {
-    _pendingIndexCompleter = Completer<int>();
+    final (token, completer) = _acquireCompleter();
     try {
       final payload = Uint8List.fromList(buildHeader(jpegHeaderMagic, jpeg.length) + jpeg);
       await _sendChunked(payload);
-      return await _pendingIndexCompleter!.future.timeout(const Duration(seconds: 5));
+      return await completer.future.timeout(const Duration(seconds: 5));
     } finally {
-      _pendingIndexCompleter = null;
+      _pendingCompleters.remove(token);
     }
   }
 
@@ -535,12 +556,12 @@ class _FramePageState extends State<FramePage> {
   Future<Uint8List> _downloadThumbnail(int index) => _downloadRaw(downloadThumbCmdMagic, index);
 
   Future<void> _sendFormatCommand() async {
-    _pendingIndexCompleter = Completer<int>();
+    final (token, completer) = _acquireCompleter();
     try {
       await _sendChunked(buildHeader(formatCmdMagic, 0));
-      await _pendingIndexCompleter!.future.timeout(const Duration(seconds: 30));
+      await completer.future.timeout(const Duration(seconds: 30));
     } finally {
-      _pendingIndexCompleter = null;
+      _pendingCompleters.remove(token);
     }
   }
 
@@ -644,9 +665,10 @@ class _FramePageState extends State<FramePage> {
     } catch (e) {
       _addLog('Stop rotation failed: $e');
     } finally {
-      _pendingIndexCompleter = null;
-      // Fix: _busy was never reset here, causing permanent UI deadlock after
-      // pressing Stop Rotation (all buttons frozen, spinner stuck forever).
+      // Note: playlistStop sends a fire-and-forget command — the device does
+      // not send an ACK_OK for stop, so there is no completer to clean up here.
+      // (The old code incorrectly nulled _pendingIndexCompleter, which could
+      // have silently cancelled an unrelated in-flight upload's completer.)
       if (mounted) setState(() => _busy = false);
     }
   }

@@ -1,57 +1,110 @@
-# AMOLED Frame — Code Review Findings
+# AMOLED Frame — Code Review, Bugs & Improvements
 
-Findings from reviewing `main.dart`, `image_utils.dart`, and `text_composer_page.dart`.
+Comprehensive audit and analysis of the Flutter mobile application (`AMOLED_frame_mobile_app`).
 
-## Bugs
+---
 
-### 1. Editor/Banner images are uploaded as PNG mislabeled as JPEG (most serious)
+## 1. Critical & High Severity Bugs
 
-`ImageEditorPage._exportCanvas()` and `FlashBannerPage._renderFrame()` both encode their output with `ui.ImageByteFormat.png` and never pass it through `img.encodeJpg()`. But `_uploadImageGetIndex()` always tags the payload with the `JPG1` header magic, and the firmware is documented to run a JPEG decoder directly on the bytes.
+### 1. Double Rotation & Image Distortion in "Create Text" Flow
+- **Status:** **Fixed** (Bypassed `ImageEditorPage` for text composition)
+- **Location:** [`lib/pages/frame_page.dart` (lines 461–479)](AMOLED_frame_mobile_app/lib/pages/frame_page.dart#L461-L479)
+- **Problem:** Tapping **Create Text** opens `TextComposerPage`, which calls `renderTextToPanelImage()` ([`lib/utils/image_utils.dart`](AMOLED_frame_mobile_app/lib/utils/image_utils.dart#L64-L100)) to produce an already-rotated 192×960 native JPEG. Then `_createTextImage()` immediately pushes this output into `ImageEditorPage(imageBytes: bytes)`. Inside `ImageEditorPage`, `imageBytes` is treated as a background photo on a 960×192 working canvas, forcing the 192×960 image to squeeze horizontally, distorting text. Upon export, `_exportCanvas()` rotates it *again* by 90°, resulting in double-rotated, upside-down, and severely distorted text on the physical frame.
+- **Fix:** Bypassed `ImageEditorPage` when creating text directly from `TextComposerPage`. The natively rotated output of `TextComposerPage` is now used directly, preventing distortion.
 
-So every image created via **Create Image**, **Create Text**, or **Flash Banner** — arguably the app's main features — actually uploads raw PNG bytes under a JPEG header. Only the plain **Pick Image** flow (via `fitImageToPanel`) and the *intermediate* text-composer render actually produce real JPEG. This will very likely fail to decode or render garbage on real hardware.
+---
 
-`makeThumbnail()` happens to still work because `img.decodeImage()` auto-detects PNG, which is probably why this has gone unnoticed — the thumbnails look right even though the full image is broken.
+### 2. Canvas Export Does Not Guarantee Exact 192×960 Pixel Dimensions
+- **Status:** **Fixed** (Strict `copyResize` guard added after rotation)
+- **Location:** [`lib/pages/image_editor_page.dart` (lines 321–376)](file:///c:/Users/anupa/Desktop/Techlabs/AMOLED_frame_app/AMOLED_frame_mobile_app/lib/pages/image_editor_page.dart#L321-L376)
+- **Problem:** `_exportCanvas()` calculates `neededPixelRatio = 960 / renderedLogicalWidth` and captures the `RepaintBoundary` via `boundary.toImage(pixelRatio: neededPixelRatio)`. Because screen rendering and subpixel bounds vary across devices, `captured.height` can resolve to values like 191px or 193px instead of exactly 192px. When rotated 90° CW, the resulting image is 193×960 or 191×960. The ESP32-P4 firmware directly `memcpy`s decoded JPEG pixels into a fixed 192×960 framebuffer; any mismatched resolution causes image shearing, line corruption, or out-of-bounds memory crashes.
+- **Fix:** Added a strict dimension guard after `copyRotate()`. If the rotated image dimensions are not exactly 192×960, a `copyResize(..., interpolation: Interpolation.linear)` pass forces the output to the correct size before JPEG encoding.
 
-### 2. `ImageEditorPage._exportCanvas()` doesn't guarantee exact 192×960 output
+---
 
-The `RepaintBoundary` only fixes the *aspect ratio* (via `AspectRatio`), not the absolute pixel size — actual size is whatever `LayoutBuilder`'s constraints resolve to on screen. `boundary.toImage(pixelRatio: 1.0)` then captures that arbitrary size, with no resize step down to `panelWidth x panelHeight` afterward.
+### 3. BLE Response Mismatch Risk & Response Interleaving
+- **Status:** **Fixed** (Sequence-token map replaces single shared completer; disconnect handler cancels all pending completers)
+- **Location:** [`lib/pages/frame_page.dart`](AMOLED_frame_mobile_app/lib/pages/frame_page.dart) & [`lib/ble/frame_ble_service.dart`](AMOLED_frame_mobile_app/lib/ble/frame_ble_service.dart)
+- **Problem:** `_pendingIndexCompleter` was a single shared instance variable. `_onNotify` completed it whenever *any* `ACK_OK` (0x06) notification arrived — regardless of which command sent it. `_doStopRotation` also explicitly nulled `_pendingIndexCompleter` in its `finally` block, silently cancelling any unrelated in-flight upload completer. A disconnect left all pending completers hanging until their timeouts fired.
+- **Fix:** Replaced the single `_pendingIndexCompleter` field with a sequence-token map (`Map<int, Completer<int>> _pendingCompleters`). Each operation that awaits an ACK calls `_acquireCompleter()` to mint a unique token and register its own `Completer`. `_onNotify` delivers `ACK_OK` to the lowest-token (oldest) pending completer — correct and safe because `_bleQueue` enforces strictly sequential execution. The spurious `_pendingIndexCompleter = null` in `_doStopRotation` is removed. The disconnect handler now immediately cancels all pending completers with an error instead of leaving them to time out.
 
-Combined with bug #1, edited images can be both the wrong format and the wrong resolution — exactly the "corrupted/sheared" failure mode the comments at the top of `image_utils.dart` warn about.
+---
 
-### 3. Scan timeout leaves the app stuck in "Scanning..." forever
+### 4. Code Duplication & Bypassed `FrameBleService` Singleton
+- **Location:** [`lib/pages/frame_page.dart`](AMOLED_frame_mobile_app/lib/pages/frame_page.dart) vs [`lib/ble/frame_ble_service.dart`](AMOLED_frame_mobile_app/lib/ble/frame_ble_service.dart)
+- **Problem:** `_FramePageState` duplicate-implements almost all BLE logic (`_bleQueue`, `_enqueueBleTask`, `_sendChunked`, `_uploadImageGetIndex`, `_downloadRaw`, `_onNotify`) locally inside the widget state, completely bypassing the `FrameBleService` class created in `lib/ble/frame_ble_service.dart`. This causes duplicated bugs, state fragmentation, and makes testing or reusing BLE operations across pages impossible.
+- **Fix:** Refactor `_FramePageState` to delegate all BLE commands, state management, and notifications exclusively to `FrameBleService`.
 
-In `_connectToFrame()`, if the 10-second scan (`FlutterBluePlus.startScan(timeout: ...)`) expires without finding a device named `AMOLED-Frame`, nothing ever transitions `_connState` back to `disconnected`. The UI only shows a "Reconnect" button when `_connState == disconnected`, and `_connectToFrame()` early-returns while state is `scanning`.
+---
 
-Net effect: if the frame isn't powered on/in range the first time, the user is stuck with no way to retry short of restarting the app.
+### 5. Stale Queued Tasks Persist Across BLE Disconnections
+- **Location:** [`lib/pages/frame_page.dart` (lines 42–72, 171–183)](AMOLED_frame_mobile_app/lib/pages/frame_page.dart#L42-L72)
+- **Problem:** When `BluetoothConnectionState.disconnected` fires, `_rxChar` and `_txChar` are set to `null`, but `_bleQueue` is never cleared. Pending queued tasks remain in `_bleQueue` and will attempt execution either immediately upon reconnect or throw unhandled disconnect exceptions mid-loop.
+- **Fix:** In the connection listener (`disconnected` handler), clear `_bleQueue`, complete any active completers with an error (`DisconnectedException`), and reset `_bleProcessing` state cleanly.
 
-### 4. Start/Stop Rotation button isn't gated by `_busy`
+---
 
-Every other BLE-triggering control (Show, Send Selected, the whole "Images" panel) is disabled while `_busy` is true — but the "Start Rotation"/"Stop Rotation" button at the bottom only checks `connected`. Since BLE state (`_pendingIndexCompleter`, chunked writes over `_rxChar`) is not designed for concurrent commands, tapping this while another operation is in flight can interleave writes on the wire or clobber the shared completer, causing hangs (mitigated only by a 5s timeout) or a response being routed to the wrong caller.
+## 2. Medium & Low Severity Bugs
 
-### 5. No mutex/queue around BLE commands in general
+### 6. Unconstrained Text Layout in Flash Banner Page
+- **Location:** [`lib/pages/flash_banner_page.dart` (lines 71–81, 90–94)](AMOLED_frame_mobile_app/lib/pages/flash_banner_page.dart#L71-L81)
+- **Problem:** `_makeTextPainter()` calls `tp.layout()` without supplying a `maxWidth` constraint. If a user enters long banner text or uses a large font size, `_renderFrame()` paints unclipped text exceeding canvas bounds, causing cut-off characters or rendering artifacts on generated frames.
+- **Fix:** Constrain text painting in `_makeTextPainter()` or calculate appropriate scaling based on canvas width.
 
-`_pendingIndexCompleter` and `_downloadBuilder`/`_pendingDownloadCompleter` are single, shared instance fields. Nothing prevents two logical commands (e.g. a brightness change via slider `onChangeEnd`, which has no busy-gate, firing while an image upload is mid-chunk-stream) from interleaving their `_sendChunked` writes. The protocol has no sequence numbers, so interleaved chunks from two commands would corrupt both.
+---
 
-### 6. `_deleteSelectedImages` has no rollback on partial failure
+### 7. Widget Modularization Ignored in Image Editor Page
+- **Location:** [`lib/pages/image_editor_page.dart`](AMOLED_frame_mobile_app/lib/pages/image_editor_page.dart) vs [`lib/widgets/`](AMOLED_frame_mobile_app/lib/widgets/)
+- **Problem:** Helper widgets `ColorSwatchPicker` ([`lib/widgets/color_swatch_picker.dart`](AMOLED_frame_mobile_app/lib/widgets/color_swatch_picker.dart)), `EditorStylePanel` ([`lib/widgets/editor_style_panel.dart`](AMOLED_frame_mobile_app/lib/widgets/editor_style_panel.dart)), and `EmojiStickerPicker` ([`lib/widgets/emoji_sticker_picker.dart`](AMOLED_frame_mobile_app/lib/widgets/emoji_sticker_picker.dart)) exist in `lib/widgets/`, but `ImageEditorPage` duplicate-defines all swatch pickers, font chips, style panels, and emoji grids inline (over 400 lines of duplicated code).
+- **Fix:** Replace inline UI code in `ImageEditorPage` with imports and usages of the reusable widgets in `lib/widgets/`.
 
-It downloads the images to keep, calls `_sendFormatCommand()` (wiping the device), then re-uploads the kept images one by one. If any re-upload fails partway through (BLE drop, timeout), the device has already been wiped, the app's `_sentImages`/`deviceIndex` state hasn't been updated yet (still points at pre-format indices), and there's no retry — leaving the app and device in an inconsistent, hard-to-recover state.
+---
 
-### 7. Deprecated/inconsistent `Color` API usage
+### 8. Item Delete Button Touch Target & Clipping Issues
+- **Location:** [`lib/pages/image_editor_page.dart` (lines 804–820)](AMOLED_frame_mobile_app/lib/pages/image_editor_page.dart#L804-L820)
+- **Problem:** The item delete ("×") button is positioned at `Positioned(top: -8, right: -8)` inside a transformed container (`Transform.scale`). When an item is scaled down or placed near the canvas border, `Clip.hardEdge` on line 662 clips the close button, making it unclickable or invisible. Additionally, parent gesture recognizers steal touch events on small items.
+- **Fix:** Render selection controls/delete handles in an unclipped overlay layer relative to the active item's bounding box.
 
-`text_composer_page.dart` already uses the newer `c.toARGB32()`, but `main.dart` still compares colors with `c.value == active.value` (in both `FlashBannerPage` and `ImageEditorPage`'s swatch pickers) and reads `.red`/`.green`/`.blue` in `_showCustomColorPicker`. These are deprecated in current Flutter and inconsistent with the rest of the codebase — worth unifying.
+---
 
-### 8. Item delete ("×") button doesn't track scale/rotation
+### 9. Rotation Interval Sync Ignores Out-of-Range Firmware Values
+- **Location:** [`lib/pages/frame_page.dart` (lines 336–338)](AMOLED_frame_mobile_app/lib/pages/frame_page.dart#L336-L338)
+- **Problem:** During playlist sync (`_syncPlaylistFromDevice`), the app checks `if (interval >= 2 && interval <= 30)`. If the device was configured with a different interval (e.g. 1s or 60s), the app silently ignores the value, leaving `_rotationSeconds` out of sync with actual hardware behavior without notifying the user.
+- **Fix:** Clamp incoming intervals to valid slider bounds `interval.toDouble().clamp(2.0, 30.0)` and log a warning if out-of-range values are normalized.
 
-In `ImageEditorPage`, the small delete button is a sibling of `Transform.rotate`/`Transform.scale` inside the item's `Stack`, positioned at a fixed `(-8, -8)` offset from the *untransformed* layout bounds. For a scaled-up or rotated text/sticker item, the visible close button ends up detached from the item's actual on-screen corner.
+---
 
-## Potential improvements
+### 10. Unmanaged In-Memory Image Byte Cache
+- **Location:** [`lib/models/sent_image.dart`](AMOLED_frame_mobile_app/lib/models/sent_image.dart#L12-L13) & [`lib/pages/frame_page.dart`](AMOLED_frame_mobile_app/lib/pages/frame_page.dart)
+- **Problem:** `SentImage` holds full resolution `Uint8List` image byte arrays in memory indefinitely. Picking or generating dozens of images retains megabytes of uncompressed image buffers in RAM, leading to memory pressure on low-end devices.
+- **Fix:** Store full image bytes to temporary disk files or implement an LRU cache that keeps only thumbnails in memory and loads full bytes on-demand during BLE upload.
 
-- **Fix the format pipeline consistently** — route `ImageEditorPage` and `FlashBannerPage` output through the same `fitImageToPanel`/`encodeJpg` treatment `image_utils.dart` already provides for the "Pick Image" path, so every code path guarantees real, exactly-sized JPEG.
-- **Add a simple command queue** for BLE writes (single in-flight request, FIFO) instead of relying on ad-hoc `_busy` flags scattered across individual buttons — this would fix bugs #4/#5 structurally rather than one button at a time.
-- **Handle scan timeout explicitly** — listen for `FlutterBluePlus.isScanning` (or use the scan `timeout` completion) and reset to `disconnected` with a log message if nothing was found, so "Reconnect" reliably reappears.
-- **Add per-item upload progress** for multi-image operations (`_sendSelectedToDevice`, `_deleteSelectedImages`, `_startRotation`) — right now it's just a single indeterminate `LinearProgressIndicator` with no indication of "3 of 12 sent."
-- **Avoid full-storage reupload on delete** — the current delete flow is O(n) full re-upload for removing even one image because the firmware only exposes format-everything. If firmware could add a per-index delete/compact command, this whole flow (and its failure mode above) goes away.
-- **Add basic write verification** — the BLE header includes a CRC16, but the JPEG/thumbnail payload itself is unverified; a payload CRC or length check on the device side (and a retry path on the app side) would make transfers more robust over flaky BLE links.
-- **Surface disconnects more actively during long operations** — `_deleteSelectedImages`/`_startRotation` don't check `_rxChar == null` mid-loop after the first check, so a disconnect partway through a multi-image loop will throw from deep inside rather than failing gracefully with a clear message.
-- **Gate photo-picker-dependent buttons by permission state** — `_ensurePermissions()` only requests Bluetooth/location; on newer Android, gallery access needs `READ_MEDIA_IMAGES`, which is left entirely to `image_picker`'s own prompt. Worth confirming/handling denial explicitly rather than silently failing.
-- **Tests** — there's no test coverage at all for the BLE framing (`_crc16Ccitt`, `_buildHeader`, chunking) or the image geometry math (`fitImageToPanel`'s crop/rotate math), both of which are exactly the kind of "off-by-one and it renders sheared on hardware" code that benefits most from unit tests.
+---
+
+### 11. Android 13+ Media Permission Support Gap
+- **Location:** [`lib/pages/frame_page.dart` (lines 107–114)](AMOLED_frame_mobile_app/lib/pages/frame_page.dart#L107-L114)
+- **Problem:** `_ensurePermissions()` checks `Permission.bluetoothScan`, `Permission.bluetoothConnect`, and `Permission.locationWhenInUse`, but omitted checking photo/media permissions (`Permission.photos` / `Permission.storage`). On Android 13+ (API 33+), granular media permissions are required when picking images on specific custom Android builds.
+- **Fix:** Update permission handling to check `Permission.photos` or fallback gracefully depending on Android API level.
+
+---
+
+## 3. Suggested Improvements & Enhancements
+
+### Architectural & Code Quality Improvements
+1. **Unify Protocol & BLE Layer:** Move all BLE operations into `FrameBleService`, establishing a clean single source of truth for connection state, queue management, and GATT interactions.
+2. **Add Command Identification / CRC Verification:** Add packet IDs to requests and verify payload CRCs on incoming download streams to catch corrupted chunks over wireless BLE links.
+3. **Refactor State Management:** Adopt a structured state management solution (e.g., `Notifier`/`ChangeNotifier` or `Riverpod`/`Bloc`) to separate BLE background operations from UI widget state.
+
+### UI / UX Enhancements
+1. **Multi-Item Upload Progress Indicator:** Replace the indeterminate `LinearProgressIndicator` with a detailed progress widget showing "Uploading image X of Y (Z%)" during bulk uploads (`_sendSelectedToDevice`, `_startRotation`, `_deleteSelectedImages`).
+2. **In-App Device Log & Console Viewer:** Surface BLE logs (`_addLog`) in an expandable debug panel or bottom sheet so users can diagnose connection issues without attached IDE debuggers.
+3. **Auto-Reconnect & Persistent Offline Banner:** Display a sleek banner when connection drops and implement automatic exponential-backoff background reconnection.
+4. **Per-Image Deletion Firmware Protocol Support:** Request/implement per-index image deletion in the firmware protocol to avoid the expensive O(N) download-all -> format-device -> re-upload-remaining deletion workaround.
+
+### Testing & QA Strategy
+1. **Unit Tests for Protocol Framing & Math:** Write comprehensive unit tests for:
+   - `crc16Ccitt` calculation against known hardware test vectors.
+   - `buildHeader` byte packing and endianness.
+   - `fitImageToPanel` crop, scale, and 90° CW rotation dimensions.
+   - `renderTextToPanelImage` rendering outputs.
+2. **Widget Tests:** Replace `test/widget_test.dart` boilerplate with actual UI tests validating screen navigation, picker interactions, and button state gating.

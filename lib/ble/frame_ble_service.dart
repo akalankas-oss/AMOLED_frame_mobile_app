@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' show min;
 import 'dart:typed_data';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'frame_protocol.dart';
@@ -17,7 +18,11 @@ class FrameBleService {
   StreamSubscription<BluetoothConnectionState>? connSub;
   StreamSubscription<List<int>>? notifySub;
   int mtu = 23;
-  Completer<int>? pendingIndexCompleter;
+  // Sequence-token map: each BLE command that awaits an ACK_OK gets its own
+  // numbered Completer. onNotify delivers to the oldest pending token (FIFO),
+  // which is safe because bleQueue enforces strictly sequential execution.
+  int _bleSeqToken = 0;
+  final Map<int, Completer<int>> _pendingCompleters = {};
 
   bool awaitingDownloadHeader = false;
   int downloadExpectedSize = 0;
@@ -65,6 +70,16 @@ class FrameBleService {
     if (onLog != null) onLog!(message);
   }
 
+  /// Mint a fresh sequence token and register a Completer for it.
+  /// The caller MUST remove the token from [_pendingCompleters] in a finally
+  /// block (even on timeout / error) to prevent stale entries.
+  (int, Completer<int>) acquireCompleter() {
+    final token = ++_bleSeqToken;
+    final completer = Completer<int>();
+    _pendingCompleters[token] = completer;
+    return (token, completer);
+  }
+
   void onNotify(List<int> value) {
     if (value.isEmpty) return;
 
@@ -96,10 +111,16 @@ class FrameBleService {
     final status = value[0];
     log('Device: ${statusNames[status] ?? 'unknown (0x${status.toRadixString(16)})'}');
 
-    final completer = pendingIndexCompleter;
-    if (status == 0x06 && value.length >= 5 && completer != null && !completer.isCompleted) {
-      final index = value[1] | (value[2] << 8) | (value[3] << 16) | (value[4] << 24);
-      completer.complete(index);
+    // Deliver ACK_OK to the oldest pending completer (FIFO). This is safe
+    // because bleQueue enforces strictly sequential execution — there is
+    // exactly one in-flight command at any given time.
+    if (status == 0x06 && value.length >= 5 && _pendingCompleters.isNotEmpty) {
+      final token = _pendingCompleters.keys.reduce(min);
+      final completer = _pendingCompleters.remove(token)!;
+      if (!completer.isCompleted) {
+        final index = value[1] | (value[2] << 8) | (value[3] << 16) | (value[4] << 24);
+        completer.complete(index);
+      }
     }
   }
 
@@ -113,13 +134,13 @@ class FrameBleService {
   }
 
   Future<int> uploadImageGetIndex(Uint8List jpeg) async {
-    pendingIndexCompleter = Completer<int>();
+    final (token, completer) = acquireCompleter();
     try {
       final payload = Uint8List.fromList(buildHeader(jpegHeaderMagic, jpeg.length) + jpeg);
       await sendChunked(payload);
-      return await pendingIndexCompleter!.future.timeout(const Duration(seconds: 5));
+      return await completer.future.timeout(const Duration(seconds: 5));
     } finally {
-      pendingIndexCompleter = null;
+      _pendingCompleters.remove(token);
     }
   }
 
@@ -158,12 +179,12 @@ class FrameBleService {
   Future<Uint8List> downloadThumbnail(int index) => downloadRaw(downloadThumbCmdMagic, index);
 
   Future<void> sendFormatCommand() async {
-    pendingIndexCompleter = Completer<int>();
+    final (token, completer) = acquireCompleter();
     try {
       await sendChunked(buildHeader(formatCmdMagic, 0));
-      await pendingIndexCompleter!.future.timeout(const Duration(seconds: 30));
+      await completer.future.timeout(const Duration(seconds: 30));
     } finally {
-      pendingIndexCompleter = null;
+      _pendingCompleters.remove(token);
     }
   }
 }

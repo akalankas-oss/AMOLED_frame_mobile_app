@@ -337,24 +337,44 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
       final double renderedLogicalWidth = boundary.size.width;
       final double neededPixelRatio = _canvasWidth / renderedLogicalWidth;
 
-      // Capture at exactly 960×192 physical pixels.
+      // Capture at approximately 960×192 physical pixels.
+      // NOTE: floating-point pixelRatio and subpixel rendering mean the actual
+      // captured dimensions can be off by ±1px (e.g. 191×959 or 193×961).
       final ui.Image captured = await boundary.toImage(pixelRatio: neededPixelRatio);
 
       final ByteData? rawData =
           await captured.toByteData(format: ui.ImageByteFormat.rawRgba);
       if (rawData != null) {
         final imgLib = image_lib.Image.fromBytes(
-          width: captured.width,   // 960
-          height: captured.height, // 192
+          width: captured.width,
+          height: captured.height,
           bytes: rawData.buffer,
           format: image_lib.Format.uint8,
           numChannels: 4,
         );
+
         // Rotate 90° CW into native panel orientation (192×960). The firmware
         // memcpys decoded pixels directly into a 192×960 framebuffer.
         final rotated = image_lib.copyRotate(imgLib, angle: 90);
+
+        // STRICT DIMENSION GUARD: floating-point pixelRatio rounding means
+        // 'rotated' could be 191×959 or 193×961 rather than exactly 192×960.
+        // The ESP32-P4 firmware does a direct memcpy into a fixed 192×960
+        // framebuffer — any off-by-one causes image shearing, line corruption,
+        // or out-of-bounds memory writes. Force exact dimensions here.
+        final int nativeW = _canvasHeight.round(); // 192  (after 90° rotation, width == canvas height)
+        final int nativeH = _canvasWidth.round();  // 960  (after 90° rotation, height == canvas width)
+        final image_lib.Image finalImg = (rotated.width == nativeW && rotated.height == nativeH)
+            ? rotated
+            : image_lib.copyResize(
+                rotated,
+                width: nativeW,
+                height: nativeH,
+                interpolation: image_lib.Interpolation.linear,
+              );
+
         final Uint8List jpegBytes =
-            Uint8List.fromList(image_lib.encodeJpg(rotated, quality: 90));
+            Uint8List.fromList(image_lib.encodeJpg(finalImg, quality: 90));
         if (mounted) Navigator.of(context).pop(jpegBytes);
       }
     } catch (e) {
@@ -768,33 +788,30 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                                   ),
                                                   borderRadius: BorderRadius.circular(6),
                                                 ),
-                                                child: RotatedBox(
-                                                  quarterTurns: 1,
-                                                  child: item.isSticker
-                                                      ? Container(
-                                                    padding: const EdgeInsets.all(8),
-                                                    decoration: BoxDecoration(
-                                                      color: item.color,
-                                                      shape: BoxShape.circle,
-                                                    ),
-                                                    child: Icon(item.stickerIcon, size: 36, color: Colors.white),
-                                                  )
-                                                      : Text(
-                                                    item.content,
-                                                    textAlign: TextAlign.center,
-                                                    softWrap: true,
-                                                    style: TextStyle(
-                                                      fontSize: item.fontSize,
-                                                      fontFamily: item.fontFamily,
-                                                      color: item.color,
-                                                      fontWeight: item.bold ? FontWeight.bold : FontWeight.normal,
-                                                      fontStyle: item.italic ? FontStyle.italic : FontStyle.normal,
-                                                      letterSpacing: item.letterSpacing,
-                                                      decoration: TextDecoration.combine([
-                                                        if (item.underline) TextDecoration.underline,
-                                                        if (item.strikethrough) TextDecoration.lineThrough,
-                                                      ]),
-                                                    ),
+                                                child: item.isSticker
+                                                    ? Container(
+                                                  padding: const EdgeInsets.all(8),
+                                                  decoration: BoxDecoration(
+                                                    color: item.color,
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                  child: Icon(item.stickerIcon, size: 36, color: Colors.white),
+                                                )
+                                                    : Text(
+                                                  item.content,
+                                                  textAlign: TextAlign.center,
+                                                  softWrap: true,
+                                                  style: TextStyle(
+                                                    fontSize: item.fontSize,
+                                                    fontFamily: item.fontFamily,
+                                                    color: item.color,
+                                                    fontWeight: item.bold ? FontWeight.bold : FontWeight.normal,
+                                                    fontStyle: item.italic ? FontStyle.italic : FontStyle.normal,
+                                                    letterSpacing: item.letterSpacing,
+                                                    decoration: TextDecoration.combine([
+                                                      if (item.underline) TextDecoration.underline,
+                                                      if (item.strikethrough) TextDecoration.lineThrough,
+                                                    ]),
                                                   ),
                                                 ),
                                               ),
