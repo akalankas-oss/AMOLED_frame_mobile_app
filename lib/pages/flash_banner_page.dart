@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image/image.dart' as image_lib;
 
 enum _BannerEffect { scroll, blink }
+enum _ScrollDirection { rightToLeft, leftToRight, topToBottom, bottomToTop }
 
 class FlashBannerPage extends StatefulWidget {
   const FlashBannerPage({super.key});
@@ -23,6 +24,7 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
   Color _textColor = Colors.white;
   Color _bgColor = Colors.black;
   _BannerEffect _effect = _BannerEffect.scroll;
+  _ScrollDirection _direction = _ScrollDirection.rightToLeft;
   double _fontSize = 90;
   bool _generating = false;
 
@@ -80,7 +82,7 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
     return tp;
   }
 
-  Future<Uint8List> _renderFrame({required double textX, required bool showText}) async {
+  Future<Uint8List> _renderFrame({required double textX, required double textY, required bool showText}) async {
     final recorder = ui.PictureRecorder();
     // Draw directly on the native 960×192 landscape canvas — no rotation tricks.
     final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, _canvasWidth, _canvasHeight));
@@ -89,8 +91,7 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
 
     if (showText && _textController.text.isNotEmpty) {
       final tp = _makeTextPainter();
-      final ty = (_canvasHeight - tp.height) / 2;
-      tp.paint(canvas, Offset(textX, ty));
+      tp.paint(canvas, Offset(textX, textY));
     }
 
     final picture = recorder.endRecording();
@@ -111,21 +112,51 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
 
   Future<List<Uint8List>> _generateFrames() async {
     final frames = <Uint8List>[];
+    final tp = _makeTextPainter();
+    final textWidth = tp.width;
+    final textHeight = tp.height;
+
     if (_effect == _BannerEffect.blink) {
-      final tp = _makeTextPainter();
-      final centeredX = (_canvasWidth - tp.width) / 2;
-      frames.add(await _renderFrame(textX: centeredX, showText: true));
-      frames.add(await _renderFrame(textX: centeredX, showText: false));
+      final centeredX = (_canvasWidth - textWidth) / 2;
+      final centeredY = (_canvasHeight - textHeight) / 2;
+      frames.add(await _renderFrame(textX: centeredX, textY: centeredY, showText: true));
+      frames.add(await _renderFrame(textX: centeredX, textY: centeredY, showText: false));
     } else {
-      final tp = _makeTextPainter();
-      final textWidth = tp.width;
       const int steps = 14; // keep the BLE upload count manageable
-      final startX = _canvasWidth;
-      final endX = -textWidth;
+      double startX = 0, endX = 0, startY = 0, endY = 0;
+
+      switch (_direction) {
+        case _ScrollDirection.rightToLeft:
+          startX = _canvasWidth;
+          endX = -textWidth;
+          startY = (_canvasHeight - textHeight) / 2;
+          endY = startY;
+          break;
+        case _ScrollDirection.leftToRight:
+          startX = -textWidth;
+          endX = _canvasWidth;
+          startY = (_canvasHeight - textHeight) / 2;
+          endY = startY;
+          break;
+        case _ScrollDirection.topToBottom:
+          startX = (_canvasWidth - textWidth) / 2;
+          endX = startX;
+          startY = -textHeight;
+          endY = _canvasHeight;
+          break;
+        case _ScrollDirection.bottomToTop:
+          startX = (_canvasWidth - textWidth) / 2;
+          endX = startX;
+          startY = _canvasHeight;
+          endY = -textHeight;
+          break;
+      }
+
       for (int i = 0; i <= steps; i++) {
         final t = i / steps;
         final x = startX + (endX - startX) * t;
-        frames.add(await _renderFrame(textX: x, showText: true));
+        final y = startY + (endY - startY) * t;
+        frames.add(await _renderFrame(textX: x, textY: y, showText: true));
       }
     }
     return frames;
@@ -182,6 +213,22 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
               selected: {_effect},
               onSelectionChanged: (s) => setState(() => _effect = s.first),
             ),
+            if (_effect == _BannerEffect.scroll) ...[
+              const SizedBox(height: 16),
+              const Text('Scroll Direction', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              SegmentedButton<_ScrollDirection>(
+                segments: const [
+                  ButtonSegment(value: _ScrollDirection.rightToLeft, icon: Icon(Icons.arrow_back)),
+                  ButtonSegment(value: _ScrollDirection.leftToRight, icon: Icon(Icons.arrow_forward)),
+                  ButtonSegment(value: _ScrollDirection.topToBottom, icon: Icon(Icons.arrow_downward)),
+                  ButtonSegment(value: _ScrollDirection.bottomToTop, icon: Icon(Icons.arrow_upward)),
+                ],
+                selected: {_direction},
+                onSelectionChanged: (s) => setState(() => _direction = s.first),
+                showSelectedIcon: false,
+              ),
+            ],
             const SizedBox(height: 16),
             Row(
               children: [

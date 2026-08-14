@@ -13,6 +13,44 @@ import 'flash_banner_page.dart';
 import 'image_editor_page.dart';
 import 'text_composer_page.dart';
 
+// ── Animated sequence thumbnail ───────────────────────────────────────────
+/// Cycles through the thumbnails of a multi-frame sequence at ~8 fps.
+class _SequenceThumbnail extends StatefulWidget {
+  const _SequenceThumbnail({required this.thumbnails, required this.needsDisplayRotation});
+  final List<Uint8List> thumbnails;
+  final bool needsDisplayRotation;
+
+  @override
+  State<_SequenceThumbnail> createState() => _SequenceThumbnailState();
+}
+
+class _SequenceThumbnailState extends State<_SequenceThumbnail> {
+  int _frameIndex = 0;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 120), (_) {
+      if (mounted) setState(() => _frameIndex = (_frameIndex + 1) % widget.thumbnails.length);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RotatedBox(
+      quarterTurns: widget.needsDisplayRotation ? 3 : 0,
+      child: Image.memory(widget.thumbnails[_frameIndex], fit: BoxFit.cover),
+    );
+  }
+}
+
 class FramePage extends StatefulWidget {
   const FramePage({super.key});
 
@@ -221,20 +259,24 @@ class _FramePageState extends State<FramePage> {
     if (frames == null || frames.isEmpty) return;
     if (!mounted) return;
     setState(() {
-      final baseIndex = _sentImages.length;
-      for (int i = 0; i < frames.length; i++) {
-        final thumb = makeThumbnail(frames[i]);
-        final image = SentImage(
-          fullBytes: frames[i],
-          thumbnailBytes: thumb,
-          label: 'Banner ${baseIndex + i + 1}',
-        );
-        image.selectedForRotation = true;
-        _sentImages.add(image);
-      }
+      // Build per-frame thumbnails for the animated preview
+      final thumbs = frames.map(makeThumbnail).toList();
+      final seqImage = SentImage(
+        // Use the first frame as the static fallback thumbnail
+        fullBytes: frames.first,
+        thumbnailBytes: thumbs.first,
+        label: 'Banner ${_sentImages.length + 1}',
+        isSequence: true,
+        sequenceFrames: frames,
+        sequenceThumbnails: thumbs,
+        // One nullable slot per frame, filled during BLE upload
+        sequenceDeviceIndices: List<int?>.filled(frames.length, null),
+      );
+      seqImage.selectedForRotation = true;
+      _sentImages.add(seqImage);
       _activeIndex = _sentImages.length - 1;
     });
-    _addLog('Added ${frames.length} banner frame(s) — press "Send Selected to Device" then "Start Rotation".');
+    _addLog('Added banner sequence (${frames.length} frames) — press "Send Selected to Device" then "Start Rotation".');
   }
 
   Future<void> _createTextImage() async {
@@ -259,16 +301,39 @@ class _FramePageState extends State<FramePage> {
       _busy = true;
     });
     try {
-      int deviceIndex;
-      if (image.deviceIndex != null) {
-        deviceIndex = image.deviceIndex!;
-      } else if (image.fullBytes != null) {
-        deviceIndex = await _bleService.uploadImageWithThumbnail(image);
-        setState(() => image.deviceIndex = deviceIndex);
+      if (image.isSequence) {
+        // Upload any frames that haven't been sent yet
+        if (image.sequenceFrames != null) {
+          for (int i = 0; i < image.sequenceFrames!.length; i++) {
+            if ((image.sequenceDeviceIndices?[i]) == null) {
+              final tmp = SentImage(
+                fullBytes: image.sequenceFrames![i],
+                thumbnailBytes: image.sequenceThumbnails?[i],
+                label: '${image.label} [${i + 1}]',
+              );
+              final idx = await _bleService.uploadImageWithThumbnail(tmp);
+              setState(() => image.sequenceDeviceIndices![i] = idx);
+            }
+          }
+        }
+        // Play all frames as a fast mini-rotation (1 s per frame)
+        final indices = image.uploadedSequenceIndices;
+        if (indices.isNotEmpty) {
+          await _bleService.startRotation(indices, 1);
+          setState(() => _rotationActive = true);
+        }
       } else {
-        throw Exception('No data available');
+        int deviceIndex;
+        if (image.deviceIndex != null) {
+          deviceIndex = image.deviceIndex!;
+        } else if (image.fullBytes != null) {
+          deviceIndex = await _bleService.uploadImageWithThumbnail(image);
+          setState(() => image.deviceIndex = deviceIndex);
+        } else {
+          throw Exception('No data available');
+        }
+        await _bleService.showImageEntry(deviceIndex);
       }
-      await _bleService.showImageEntry(deviceIndex);
     } catch (e) {
       _addLog('Show failed: $e');
     } finally {
@@ -294,16 +359,44 @@ class _FramePageState extends State<FramePage> {
   Future<void> _sendSelectedToDevice() => _bleService.enqueueBleTask(_doSendSelectedToDevice);
   Future<void> _doSendSelectedToDevice() async {
     if (_bleService.connState != FrameConnState.connected || _busy) return;
-    final toSend = _sentImages.where((i) => i.selectedForRotation && i.deviceIndex == null && i.fullBytes != null).toList();
+
+    // Collect items that still need uploading (single images and sequence frames)
+    final toSend = _sentImages.where((i) {
+      if (!i.selectedForRotation) return false;
+      if (i.isSequence) {
+        // Include the sequence if any frame is still not uploaded
+        return i.sequenceFrames != null &&
+            (i.sequenceDeviceIndices?.any((idx) => idx == null) ?? true);
+      }
+      return i.deviceIndex == null && i.fullBytes != null;
+    }).toList();
+
     if (toSend.isEmpty) return;
 
     setState(() => _busy = true);
+    int totalFramesSent = 0;
     try {
       for (final image in toSend) {
-        final index = await _bleService.uploadImageWithThumbnail(image);
-        setState(() => image.deviceIndex = index);
+        if (image.isSequence && image.sequenceFrames != null) {
+          for (int i = 0; i < image.sequenceFrames!.length; i++) {
+            if ((image.sequenceDeviceIndices?[i]) == null) {
+              final tmp = SentImage(
+                fullBytes: image.sequenceFrames![i],
+                thumbnailBytes: image.sequenceThumbnails?[i],
+                label: '${image.label} [${i + 1}]',
+              );
+              final idx = await _bleService.uploadImageWithThumbnail(tmp);
+              setState(() => image.sequenceDeviceIndices![i] = idx);
+              totalFramesSent++;
+            }
+          }
+        } else {
+          final index = await _bleService.uploadImageWithThumbnail(image);
+          setState(() => image.deviceIndex = index);
+          totalFramesSent++;
+        }
       }
-      _addLog('Sent ${toSend.length} image(s) to device');
+      _addLog('Sent $totalFramesSent frame(s) to device');
     } catch (e) {
       _addLog('Send failed: $e');
     } finally {
@@ -318,17 +411,38 @@ class _FramePageState extends State<FramePage> {
 
     setState(() => _busy = true);
     try {
+      // Upload any items (or sequence frames) that haven't been sent yet
       for (final image in selected) {
-        if (image.deviceIndex == null && image.fullBytes != null) {
+        if (image.isSequence && image.sequenceFrames != null) {
+          for (int i = 0; i < image.sequenceFrames!.length; i++) {
+            if ((image.sequenceDeviceIndices?[i]) == null) {
+              final tmp = SentImage(
+                fullBytes: image.sequenceFrames![i],
+                thumbnailBytes: image.sequenceThumbnails?[i],
+                label: '${image.label} [${i + 1}]',
+              );
+              final idx = await _bleService.uploadImageWithThumbnail(tmp);
+              setState(() => image.sequenceDeviceIndices![i] = idx);
+            }
+          }
+        } else if (image.deviceIndex == null && image.fullBytes != null) {
           final index = await _bleService.uploadImageWithThumbnail(image);
           setState(() => image.deviceIndex = index);
         }
       }
 
-      final usable = selected.where((i) => i.deviceIndex != null).map((i) => i.deviceIndex!).toList();
-      if (usable.isEmpty) return;
+      // Flatten: single images contribute one index; sequences contribute all their frame indices
+      final List<int> playlistIndices = [];
+      for (final image in selected) {
+        if (image.isSequence) {
+          playlistIndices.addAll(image.uploadedSequenceIndices);
+        } else if (image.deviceIndex != null) {
+          playlistIndices.add(image.deviceIndex!);
+        }
+      }
+      if (playlistIndices.isEmpty) return;
 
-      await _bleService.startRotation(usable, _rotationSeconds.round());
+      await _bleService.startRotation(playlistIndices, _rotationSeconds.round());
       setState(() => _rotationActive = true);
     } catch (e) {
       _addLog('Start rotation failed: $e');
@@ -390,7 +504,7 @@ class _FramePageState extends State<FramePage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Delete ${toDelete.length} image(s)?'),
+        title: Text('Delete ${toDelete.length} item(s)?'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Delete')),
@@ -405,25 +519,29 @@ class _FramePageState extends State<FramePage> {
 
     SentImage? neighbor;
     for (int i = firstDeletedPos + 1; i < originalOrder.length; i++) {
-      if (toKeep.contains(originalOrder[i])) {
-        neighbor = originalOrder[i];
-        break;
-      }
+      if (toKeep.contains(originalOrder[i])) { neighbor = originalOrder[i]; break; }
     }
     if (neighbor == null) {
       for (int i = firstDeletedPos - 1; i >= 0; i--) {
-        if (toKeep.contains(originalOrder[i])) {
-          neighbor = originalOrder[i];
-          break;
-        }
+        if (toKeep.contains(originalOrder[i])) { neighbor = originalOrder[i]; break; }
       }
     }
 
     setState(() => _busy = true);
     try {
-      _addLog('Downloading ${toKeep.length} image(s) before format...');
+      _addLog('Downloading ${toKeep.length} item(s) before format...');
       for (final image in toKeep) {
-        if (image.fullBytes == null && image.deviceIndex != null) {
+        if (image.isSequence) {
+          // Ensure all sequence frames are held in memory before format
+          if (image.sequenceFrames == null || image.sequenceFrames!.isEmpty) {
+            // Nothing to download — frames were never uploaded
+            continue;
+          }
+          for (int i = 0; i < image.sequenceFrames!.length; i++) {
+            // If the frame bytes are already in sequenceFrames, nothing extra needed.
+            // (The raw JPEG is always stored in sequenceFrames on creation.)
+          }
+        } else if (image.fullBytes == null && image.deviceIndex != null) {
           image.fullBytes = await _bleService.downloadImage(image.deviceIndex!);
         }
       }
@@ -438,12 +556,30 @@ class _FramePageState extends State<FramePage> {
 
       final List<String> failedLabels = [];
       for (final image in toKeep) {
-        if (image.fullBytes != null) {
+        if (image.isSequence && image.sequenceFrames != null) {
+          // Re-upload every frame in the sequence
+          bool anyFailed = false;
+          final newIndices = List<int?>.filled(image.sequenceFrames!.length, null);
+          for (int i = 0; i < image.sequenceFrames!.length; i++) {
+            try {
+              final tmp = SentImage(
+                fullBytes: image.sequenceFrames![i],
+                thumbnailBytes: image.sequenceThumbnails?[i],
+                label: '${image.label} [${i + 1}]',
+              );
+              newIndices[i] = await _bleService.uploadImageWithThumbnail(tmp);
+            } catch (e) {
+              _addLog('Failed to re-upload frame ${i + 1} of "${image.label}": $e');
+              anyFailed = true;
+            }
+          }
+          image.sequenceDeviceIndices = newIndices;
+          setState(() => _sentImages.add(image));
+          if (anyFailed) failedLabels.add(image.label);
+        } else if (image.fullBytes != null) {
           try {
             image.deviceIndex = await _bleService.uploadImageWithThumbnail(image);
-            setState(() {
-              _sentImages.add(image);
-            });
+            setState(() => _sentImages.add(image));
           } catch (e) {
             _addLog('Failed to re-upload "${image.label}" during delete: $e');
             failedLabels.add(image.label);
@@ -455,27 +591,29 @@ class _FramePageState extends State<FramePage> {
         _activeIndex = neighbor != null && _sentImages.contains(neighbor) ? _sentImages.indexOf(neighbor) : null;
       });
 
-      if (_activeIndex != null && neighbor!.deviceIndex != null) {
-        await _bleService.showImageEntry(neighbor.deviceIndex!);
+      if (_activeIndex != null) {
+        final nbr = neighbor!;
+        if (nbr.isSequence) {
+          final indices = nbr.uploadedSequenceIndices;
+          if (indices.isNotEmpty) await _bleService.startRotation(indices, 1);
+        } else if (nbr.deviceIndex != null) {
+          await _bleService.showImageEntry(nbr.deviceIndex!);
+        }
       }
 
       if (failedLabels.isNotEmpty && mounted) {
         showDialog<void>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('Some images not restored'),
+            title: const Text('Some items not restored'),
             content: Text(
               'The device was formatted successfully, but the following '
-              'image(s) could not be re-uploaded (BLE error or disconnect) '
-              'and are no longer on the device:\n\n'
-              '${failedLabels.join('\n')}\n\n'
+              'item(s) could not be fully re-uploaded (BLE error or disconnect):\n\n'
+              '${failedLabels.join("\n")}\n\n'
               'Their bytes are still in the app — re-send them manually.',
             ),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('OK'),
-              ),
+              TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('OK')),
             ],
           ),
         );
@@ -483,9 +621,7 @@ class _FramePageState extends State<FramePage> {
     } catch (e) {
       _addLog('Delete failed: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Delete failed: $e')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -525,7 +661,11 @@ class _FramePageState extends State<FramePage> {
     final connected = _connState == FrameConnState.connected;
     final active = _activeIndex != null ? _sentImages[_activeIndex!] : null;
     final anySelected = _sentImages.any((i) => i.selectedForRotation);
-    final hasSelectedUnsent = _sentImages.any((i) => i.selectedForRotation && i.deviceIndex == null && i.fullBytes != null);
+    final hasSelectedUnsent = _sentImages.any((i) {
+      if (!i.selectedForRotation) return false;
+      if (i.isSequence) return i.sequenceDeviceIndices?.any((idx) => idx == null) ?? true;
+      return i.deviceIndex == null && i.fullBytes != null;
+    });
 
     return Scaffold(
       appBar: AppBar(
@@ -680,7 +820,31 @@ class _FramePageState extends State<FramePage> {
                             itemBuilder: (context, i) {
                               final image = _sentImages[i];
                               final isActive = _activeIndex == i;
-                              final thumb = image.thumbnailBytes ?? image.fullBytes;
+
+                              // ── Thumbnail widget ──────────────────────────
+                              Widget thumbWidget;
+                              if (image.isSequence &&
+                                  image.sequenceThumbnails != null &&
+                                  image.sequenceThumbnails!.length > 1) {
+                                thumbWidget = _SequenceThumbnail(
+                                  thumbnails: image.sequenceThumbnails!,
+                                  needsDisplayRotation: image.needsDisplayRotation,
+                                );
+                              } else {
+                                final thumb = image.thumbnailBytes ?? image.fullBytes;
+                                thumbWidget = thumb == null
+                                    ? Container(color: Colors.grey.shade300)
+                                    : RotatedBox(
+                                        quarterTurns: image.needsDisplayRotation ? 3 : 0,
+                                        child: Image.memory(thumb, fit: BoxFit.cover),
+                                      );
+                              }
+
+                              // ── Label suffix ──────────────────────────────
+                              final labelSuffix = image.isSequence
+                                  ? ' (${image.sequenceFrames?.length ?? 0} frames)'
+                                  : '';
+
                               return InkWell(
                                 onTap: () => setState(() => _activeIndex = i),
                                 child: Container(
@@ -696,13 +860,11 @@ class _FramePageState extends State<FramePage> {
                                         child: SizedBox(
                                           width: 60,
                                           height: 30,
-                                          child: thumb == null
-                                              ? Container(color: Colors.grey.shade300)
-                                              : RotatedBox(quarterTurns: image.needsDisplayRotation ? 3 : 0, child: Image.memory(thumb, fit: BoxFit.cover)),
+                                          child: thumbWidget,
                                         ),
                                       ),
                                       const SizedBox(width: 8),
-                                      Expanded(child: Text(image.label)),
+                                      Expanded(child: Text('${image.label}$labelSuffix')),
                                       IconButton(
                                         icon: const Icon(Icons.visibility_outlined),
                                         onPressed: connected ? () => _showImageEntry(i) : null,
