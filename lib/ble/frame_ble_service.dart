@@ -294,9 +294,13 @@ class FrameBleService {
   }
 
   Future<int> uploadImageWithThumbnail(SentImage image) async {
-    final index = await uploadImageGetIndex(image.fullBytes!);
-    image.thumbnailBytes ??= makeThumbnail(image.fullBytes!);
+    final bytes = await image.loadFullBytes();
+    if (bytes == null) throw Exception('No image data available for upload');
+    final index = await uploadImageGetIndex(bytes);
+    image.thumbnailBytes ??= makeThumbnail(bytes);
     await uploadThumbnail(image.thumbnailBytes!);
+    // Free the in-memory reference; bytes remain on disk if needed for re-upload.
+    image.evictFullBytes();
     return index;
   }
 

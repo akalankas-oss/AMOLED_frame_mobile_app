@@ -105,12 +105,29 @@ class _FramePageState extends State<FramePage> {
   }
 
   Future<bool> _ensurePermissions() async {
-    final statuses = await [
+    // BLE + location are required for the device connection.
+    final bleStatuses = await [
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
       Permission.locationWhenInUse,
     ].request();
-    return statuses.values.every((s) => s.isGranted || s.isLimited);
+    final bleGranted = bleStatuses.values.every((s) => s.isGranted || s.isLimited);
+
+    // Photo/media permissions for image picking.
+    // Android 13+ (API 33+): Permission.photos → READ_MEDIA_IMAGES
+    // Android ≤ 12         : Permission.storage → READ_EXTERNAL_STORAGE
+    // Treated as non-fatal — the system image picker usually works regardless,
+    // but requesting avoids silent failures on stricter OEM builds.
+    final mediaStatuses = await [
+      Permission.photos,
+      Permission.storage,
+    ].request();
+    final mediaGranted = mediaStatuses.values.any((s) => s.isGranted || s.isLimited);
+    if (!mediaGranted) {
+      _addLog('Warning: Media/photo permission not granted. Image picking may be limited on this device.');
+    }
+
+    return bleGranted;
   }
 
   Future<void> _connectToFrame() async {
@@ -201,12 +218,14 @@ class _FramePageState extends State<FramePage> {
     try {
       final fitted = fitImageToPanel(bytes);
       final thumb = makeThumbnail(fitted);
+      final image = SentImage(
+        thumbnailBytes: thumb,
+        label: 'Image ${_sentImages.length + 1}',
+      );
+      // Spill full bytes to a temp file; thumbnail stays in RAM for previews.
+      await image.persistFullBytes(fitted);
       setState(() {
-        _sentImages.add(SentImage(
-          fullBytes: fitted,
-          thumbnailBytes: thumb,
-          label: 'Image ${_sentImages.length + 1}',
-        ));
+        _sentImages.add(image);
         _activeIndex = _sentImages.length - 1;
       });
     } catch (e) {
@@ -244,8 +263,11 @@ class _FramePageState extends State<FramePage> {
 
       if (editedBytes != null) {
         final thumb = makeThumbnail(editedBytes);
+        final image = SentImage(thumbnailBytes: thumb, label: 'Image ${_sentImages.length + 1}');
+        // Spill full bytes to a temp file; thumbnail stays in RAM for previews.
+        await image.persistFullBytes(editedBytes);
         setState(() {
-          _sentImages.add(SentImage(fullBytes: editedBytes, thumbnailBytes: thumb, label: 'Image ${_sentImages.length + 1}'));
+          _sentImages.add(image);
           _activeIndex = _sentImages.length - 1;
         });
       }
@@ -260,21 +282,24 @@ class _FramePageState extends State<FramePage> {
     );
     if (frames == null || frames.isEmpty) return;
     if (!mounted) return;
+
+    // Build per-frame thumbnails for the animated preview (kept in RAM — small).
+    final thumbs = frames.map(makeThumbnail).toList();
+    final seqImage = SentImage(
+      // First-frame thumbnail stays in RAM as the static fallback
+      thumbnailBytes: thumbs.first,
+      label: 'Banner ${_sentImages.length + 1}',
+      isSequence: true,
+      // sequenceFrames holds bytes temporarily until persistSequenceFrames() spills to disk.
+      sequenceFrames: frames,
+      sequenceThumbnails: thumbs,
+      // One nullable slot per frame, filled during BLE upload
+      sequenceDeviceIndices: List<int?>.filled(frames.length, null),
+    );
+    // Spill all frame bytes to temp files to avoid holding them in RAM.
+    await seqImage.persistSequenceFrames();
+    seqImage.selectedForRotation = true;
     setState(() {
-      // Build per-frame thumbnails for the animated preview
-      final thumbs = frames.map(makeThumbnail).toList();
-      final seqImage = SentImage(
-        // Use the first frame as the static fallback thumbnail
-        fullBytes: frames.first,
-        thumbnailBytes: thumbs.first,
-        label: 'Banner ${_sentImages.length + 1}',
-        isSequence: true,
-        sequenceFrames: frames,
-        sequenceThumbnails: thumbs,
-        // One nullable slot per frame, filled during BLE upload
-        sequenceDeviceIndices: List<int?>.filled(frames.length, null),
-      );
-      seqImage.selectedForRotation = true;
       _sentImages.add(seqImage);
       _activeIndex = _sentImages.length - 1;
     });
@@ -288,8 +313,11 @@ class _FramePageState extends State<FramePage> {
     if (bytes != null) {
       if (!mounted) return;
       final thumb = makeThumbnail(bytes);
+      final image = SentImage(thumbnailBytes: thumb, label: 'Text ${_sentImages.length + 1}');
+      // Spill full bytes to a temp file; thumbnail stays in RAM for previews.
+      await image.persistFullBytes(bytes);
       setState(() {
-        _sentImages.add(SentImage(fullBytes: bytes, thumbnailBytes: thumb, label: 'Text ${_sentImages.length + 1}'));
+        _sentImages.add(image);
         _activeIndex = _sentImages.length - 1;
       });
     }
@@ -305,17 +333,18 @@ class _FramePageState extends State<FramePage> {
     try {
       if (image.isSequence) {
         // Upload any frames that haven't been sent yet
-        if (image.sequenceFrames != null) {
-          for (int i = 0; i < image.sequenceFrames!.length; i++) {
-            if ((image.sequenceDeviceIndices?[i]) == null) {
-              final tmp = SentImage(
-                fullBytes: image.sequenceFrames![i],
-                thumbnailBytes: image.sequenceThumbnails?[i],
-                label: '${image.label} [${i + 1}]',
-              );
-              final idx = await _bleService.uploadImageWithThumbnail(tmp);
-              setState(() => image.sequenceDeviceIndices![i] = idx);
-            }
+        final frameCount = image.sequenceFrameFiles?.length ?? image.sequenceFrames?.length ?? 0;
+        for (int i = 0; i < frameCount; i++) {
+          if ((image.sequenceDeviceIndices?[i]) == null) {
+            final frameBytes = await image.loadSequenceFrame(i);
+            if (frameBytes == null) continue;
+            final tmp = SentImage(
+              thumbnailBytes: image.sequenceThumbnails?[i],
+              label: '${image.label} [${i + 1}]',
+            );
+            await tmp.persistFullBytes(frameBytes);
+            final idx = await _bleService.uploadImageWithThumbnail(tmp);
+            setState(() => image.sequenceDeviceIndices![i] = idx);
           }
         }
         // Play all frames as a fast mini-rotation (1 s per frame)
@@ -328,7 +357,7 @@ class _FramePageState extends State<FramePage> {
         int deviceIndex;
         if (image.deviceIndex != null) {
           deviceIndex = image.deviceIndex!;
-        } else if (image.fullBytes != null) {
+        } else if (await image.loadFullBytes() != null) {
           deviceIndex = await _bleService.uploadImageWithThumbnail(image);
           setState(() => image.deviceIndex = deviceIndex);
         } else {
@@ -370,7 +399,8 @@ class _FramePageState extends State<FramePage> {
         return i.sequenceFrames != null &&
             (i.sequenceDeviceIndices?.any((idx) => idx == null) ?? true);
       }
-      return i.deviceIndex == null && i.fullBytes != null;
+      // deviceIndex == null means it hasn't been uploaded yet; bytes are on disk.
+      return i.deviceIndex == null;
     }).toList();
 
     if (toSend.isEmpty) return;
@@ -379,14 +409,17 @@ class _FramePageState extends State<FramePage> {
     int totalFramesSent = 0;
     try {
       for (final image in toSend) {
-        if (image.isSequence && image.sequenceFrames != null) {
-          for (int i = 0; i < image.sequenceFrames!.length; i++) {
+        if (image.isSequence) {
+          final frameCount = image.sequenceFrameFiles?.length ?? image.sequenceFrames?.length ?? 0;
+          for (int i = 0; i < frameCount; i++) {
             if ((image.sequenceDeviceIndices?[i]) == null) {
+              final frameBytes = await image.loadSequenceFrame(i);
+              if (frameBytes == null) continue;
               final tmp = SentImage(
-                fullBytes: image.sequenceFrames![i],
                 thumbnailBytes: image.sequenceThumbnails?[i],
                 label: '${image.label} [${i + 1}]',
               );
+              await tmp.persistFullBytes(frameBytes);
               final idx = await _bleService.uploadImageWithThumbnail(tmp);
               setState(() => image.sequenceDeviceIndices![i] = idx);
               totalFramesSent++;
@@ -415,19 +448,22 @@ class _FramePageState extends State<FramePage> {
     try {
       // Upload any items (or sequence frames) that haven't been sent yet
       for (final image in selected) {
-        if (image.isSequence && image.sequenceFrames != null) {
-          for (int i = 0; i < image.sequenceFrames!.length; i++) {
+        if (image.isSequence) {
+          final frameCount = image.sequenceFrameFiles?.length ?? image.sequenceFrames?.length ?? 0;
+          for (int i = 0; i < frameCount; i++) {
             if ((image.sequenceDeviceIndices?[i]) == null) {
+              final frameBytes = await image.loadSequenceFrame(i);
+              if (frameBytes == null) continue;
               final tmp = SentImage(
-                fullBytes: image.sequenceFrames![i],
                 thumbnailBytes: image.sequenceThumbnails?[i],
                 label: '${image.label} [${i + 1}]',
               );
+              await tmp.persistFullBytes(frameBytes);
               final idx = await _bleService.uploadImageWithThumbnail(tmp);
               setState(() => image.sequenceDeviceIndices![i] = idx);
             }
           }
-        } else if (image.deviceIndex == null && image.fullBytes != null) {
+        } else if (image.deviceIndex == null && await image.loadFullBytes() != null) {
           final index = await _bleService.uploadImageWithThumbnail(image);
           setState(() => image.deviceIndex = index);
         }
@@ -534,17 +570,29 @@ class _FramePageState extends State<FramePage> {
       _addLog('Downloading ${toKeep.length} item(s) before format...');
       for (final image in toKeep) {
         if (image.isSequence) {
-          // Ensure all sequence frames are held in memory before format
-          if (image.sequenceFrames == null || image.sequenceFrames!.isEmpty) {
-            // Nothing to download — frames were never uploaded
-            continue;
+          // Sequence frames: download any that aren't already persisted to disk.
+          final frameCount = image.sequenceFrameFiles?.length ?? image.sequenceFrames?.length ?? 0;
+          if (frameCount == 0 && image.deviceIndex == null) continue; // never uploaded
+          // For uploaded sequences that are no longer in memory/on disk, download each frame.
+          final files = image.sequenceFrameFiles ?? [];
+          for (int i = 0; i < frameCount; i++) {
+            final hasOnDisk = i < files.length && files[i] != null && await files[i]!.exists();
+            final hasInMemory = image.sequenceFrames != null && i < image.sequenceFrames!.length;
+            if (!hasOnDisk && !hasInMemory) {
+              final idx = image.sequenceDeviceIndices?[i];
+              if (idx != null) {
+                final downloaded = await _bleService.downloadImage(idx);
+                // Store downloaded bytes in sequenceFrames; loadSequenceFrame checks this first.
+                image.sequenceFrames ??= [];
+                while (image.sequenceFrames!.length <= i) { image.sequenceFrames!.add(Uint8List(0)); }
+                image.sequenceFrames![i] = downloaded;
+              }
+            }
           }
-          for (int i = 0; i < image.sequenceFrames!.length; i++) {
-            // If the frame bytes are already in sequenceFrames, nothing extra needed.
-            // (The raw JPEG is always stored in sequenceFrames on creation.)
-          }
-        } else if (image.fullBytes == null && image.deviceIndex != null) {
-          image.fullBytes = await _bleService.downloadImage(image.deviceIndex!);
+        } else if (await image.loadFullBytes() == null && image.deviceIndex != null) {
+          // Single image: download from device and persist to disk.
+          final downloaded = await _bleService.downloadImage(image.deviceIndex!);
+          await image.persistFullBytes(downloaded);
         }
       }
 
@@ -558,17 +606,19 @@ class _FramePageState extends State<FramePage> {
 
       final List<String> failedLabels = [];
       for (final image in toKeep) {
-        if (image.isSequence && image.sequenceFrames != null) {
-          // Re-upload every frame in the sequence
+        if (image.isSequence) {
+          final frameCount = image.sequenceFrameFiles?.length ?? image.sequenceFrames?.length ?? 0;
           bool anyFailed = false;
-          final newIndices = List<int?>.filled(image.sequenceFrames!.length, null);
-          for (int i = 0; i < image.sequenceFrames!.length; i++) {
+          final newIndices = List<int?>.filled(frameCount, null);
+          for (int i = 0; i < frameCount; i++) {
             try {
+              final frameBytes = await image.loadSequenceFrame(i);
+              if (frameBytes == null) { anyFailed = true; continue; }
               final tmp = SentImage(
-                fullBytes: image.sequenceFrames![i],
                 thumbnailBytes: image.sequenceThumbnails?[i],
                 label: '${image.label} [${i + 1}]',
               );
+              await tmp.persistFullBytes(frameBytes);
               newIndices[i] = await _bleService.uploadImageWithThumbnail(tmp);
             } catch (e) {
               _addLog('Failed to re-upload frame ${i + 1} of "${image.label}": $e');
@@ -578,7 +628,7 @@ class _FramePageState extends State<FramePage> {
           image.sequenceDeviceIndices = newIndices;
           setState(() => _sentImages.add(image));
           if (anyFailed) failedLabels.add(image.label);
-        } else if (image.fullBytes != null) {
+        } else if (await image.loadFullBytes() != null) {
           try {
             image.deviceIndex = await _bleService.uploadImageWithThumbnail(image);
             setState(() => _sentImages.add(image));
@@ -663,10 +713,14 @@ class _FramePageState extends State<FramePage> {
     final connected = _connState == FrameConnState.connected;
     final active = _activeIndex != null ? _sentImages[_activeIndex!] : null;
     final anySelected = _sentImages.any((i) => i.selectedForRotation);
+    // A non-sequence item is "unsent" when it has no deviceIndex but has bytes
+    // available (either in RAM or persisted to disk via sequenceFrameFiles/fullBytesFile).
+    // We use a simpler proxy: if deviceIndex is null and it is not sequence-only-on-device.
     final hasSelectedUnsent = _sentImages.any((i) {
       if (!i.selectedForRotation) return false;
       if (i.isSequence) return i.sequenceDeviceIndices?.any((idx) => idx == null) ?? true;
-      return i.deviceIndex == null && i.fullBytes != null;
+      // For single images, assume bytes are available if no device index yet.
+      return i.deviceIndex == null;
     });
 
     return Scaffold(
@@ -697,13 +751,14 @@ class _FramePageState extends State<FramePage> {
                     border: Border.all(color: Colors.grey),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: active?.fullBytes == null
+                  // Use thumbnail for the preview panel — full bytes may be on disk.
+                  child: (active?.thumbnailBytes == null)
                       ? const Center(child: Text('No image selected', style: TextStyle(color: Colors.grey)))
                       : ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: RotatedBox(
                       quarterTurns: active!.needsDisplayRotation ? 3 : 0,
-                      child: Image.memory(active.fullBytes!, fit: BoxFit.contain),
+                      child: Image.memory(active.thumbnailBytes!, fit: BoxFit.contain),
                     ),
                   ),
                 ),
@@ -833,7 +888,8 @@ class _FramePageState extends State<FramePage> {
                                   needsDisplayRotation: image.needsDisplayRotation,
                                 );
                               } else {
-                                final thumb = image.thumbnailBytes ?? image.fullBytes;
+                                // fullBytes is private; use thumbnailBytes for the list row preview.
+                                final thumb = image.thumbnailBytes;
                                 thumbWidget = thumb == null
                                     ? Container(color: Colors.grey.shade300)
                                     : RotatedBox(
@@ -843,8 +899,11 @@ class _FramePageState extends State<FramePage> {
                               }
 
                               // ── Label suffix ──────────────────────────────
+                              // sequenceFrames may be null after bytes are persisted to disk;
+                              // fall back to sequenceFrameFiles count.
+                              final frameCount = image.sequenceFrames?.length ?? image.sequenceFrameFiles?.length ?? 0;
                               final labelSuffix = image.isSequence
-                                  ? ' (${image.sequenceFrames?.length ?? 0} frames)'
+                                  ? ' ($frameCount frames)'
                                   : '';
 
                               return InkWell(

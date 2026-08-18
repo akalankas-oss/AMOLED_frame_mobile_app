@@ -81,16 +81,18 @@ Comprehensive audit and analysis of the Flutter mobile application (`AMOLED_fram
 ---
 
 ### 10. Unmanaged In-Memory Image Byte Cache
+- **Status:** **Fixed** (Spilled full JPEG byte arrays to temporary disk files with on-demand lazy loading via `loadFullBytes()` and cache eviction on upload)
 - **Location:** [`lib/models/sent_image.dart`](AMOLED_frame_mobile_app/lib/models/sent_image.dart#L12-L13) & [`lib/pages/frame_page.dart`](AMOLED_frame_mobile_app/lib/pages/frame_page.dart)
 - **Problem:** `SentImage` holds full resolution `Uint8List` image byte arrays in memory indefinitely. Picking or generating dozens of images retains megabytes of uncompressed image buffers in RAM, leading to memory pressure on low-end devices.
-- **Fix:** Store full image bytes to temporary disk files or implement an LRU cache that keeps only thumbnails in memory and loads full bytes on-demand during BLE upload.
+- **Fix:** Stored full image bytes to temporary disk files via `persistFullBytes()` / `persistSequenceFrames()`, kept only small thumbnails in memory for UI previews, and loaded full bytes on-demand during BLE upload.
 
 ---
 
 ### 11. Android 13+ Media Permission Support Gap
+- **Status:** **Fixed** (Added `Permission.photos` and `Permission.storage` requests to permission checks)
 - **Location:** [`lib/pages/frame_page.dart` (lines 107–114)](AMOLED_frame_mobile_app/lib/pages/frame_page.dart#L107-L114)
 - **Problem:** `_ensurePermissions()` checks `Permission.bluetoothScan`, `Permission.bluetoothConnect`, and `Permission.locationWhenInUse`, but omitted checking photo/media permissions (`Permission.photos` / `Permission.storage`). On Android 13+ (API 33+), granular media permissions are required when picking images on specific custom Android builds.
-- **Fix:** Update permission handling to check `Permission.photos` or fallback gracefully depending on Android API level.
+- **Fix:** Updated permission handling to check `Permission.photos` (API 33+) and `Permission.storage` (API <= 32) gracefully without blocking BLE connection if photo access is declined.
 
 ---
 
