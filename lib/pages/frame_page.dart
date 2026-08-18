@@ -182,9 +182,11 @@ class _FramePageState extends State<FramePage> {
         for (final image in _sentImages) {
           image.selectedForRotation = image.deviceIndex != null && res.playlistIndices.contains(image.deviceIndex);
         }
-        if (res.interval >= 2 && res.interval <= 30) {
-          _rotationSeconds = res.interval.toDouble();
+        final interval = res.interval.toDouble();
+        if (interval < 2 || interval > 30) {
+          _addLog('Warning: Device rotation interval ${res.interval} is out of bounds (2-30s). Normalizing to ${interval.clamp(2.0, 30.0)}.');
         }
+        _rotationSeconds = interval.clamp(2.0, 30.0);
         _rotationActive = res.active;
       });
     } catch (e) {

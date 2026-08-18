@@ -49,6 +49,7 @@ Comprehensive audit and analysis of the Flutter mobile application (`AMOLED_fram
 ## 2. Medium & Low Severity Bugs
 
 ### 6. Unconstrained Text Layout in Flash Banner Page
+- **Status:** **Fixed** (Constrained layout width for blink/vertical scroll and clipped canvas in `_renderFrame()`)
 - **Location:** [`lib/pages/flash_banner_page.dart` (lines 71–81, 90–94)](AMOLED_frame_mobile_app/lib/pages/flash_banner_page.dart#L71-L81)
 - **Problem:** `_makeTextPainter()` calls `tp.layout()` without supplying a `maxWidth` constraint. If a user enters long banner text or uses a large font size, `_renderFrame()` paints unclipped text exceeding canvas bounds, causing cut-off characters or rendering artifacts on generated frames.
 - **Fix:** Constrain text painting in `_makeTextPainter()` or calculate appropriate scaling based on canvas width.
@@ -56,6 +57,7 @@ Comprehensive audit and analysis of the Flutter mobile application (`AMOLED_fram
 ---
 
 ### 7. Widget Modularization Ignored in Image Editor Page
+- **Status:** **Fixed** (Replaced inline UI code with imports of reusable widgets)
 - **Location:** [`lib/pages/image_editor_page.dart`](AMOLED_frame_mobile_app/lib/pages/image_editor_page.dart) vs [`lib/widgets/`](AMOLED_frame_mobile_app/lib/widgets/)
 - **Problem:** Helper widgets `ColorSwatchPicker` ([`lib/widgets/color_swatch_picker.dart`](AMOLED_frame_mobile_app/lib/widgets/color_swatch_picker.dart)), `EditorStylePanel` ([`lib/widgets/editor_style_panel.dart`](AMOLED_frame_mobile_app/lib/widgets/editor_style_panel.dart)), and `EmojiStickerPicker` ([`lib/widgets/emoji_sticker_picker.dart`](AMOLED_frame_mobile_app/lib/widgets/emoji_sticker_picker.dart)) exist in `lib/widgets/`, but `ImageEditorPage` duplicate-defines all swatch pickers, font chips, style panels, and emoji grids inline (over 400 lines of duplicated code).
 - **Fix:** Replace inline UI code in `ImageEditorPage` with imports and usages of the reusable widgets in `lib/widgets/`.
@@ -63,6 +65,7 @@ Comprehensive audit and analysis of the Flutter mobile application (`AMOLED_fram
 ---
 
 ### 8. Item Delete Button Touch Target & Clipping Issues
+- **Status:** **Fixed** (Removed the clipped inline button in favor of the full-width "Delete Selected Item" button in the EditorStylePanel)
 - **Location:** [`lib/pages/image_editor_page.dart` (lines 804–820)](AMOLED_frame_mobile_app/lib/pages/image_editor_page.dart#L804-L820)
 - **Problem:** The item delete ("×") button is positioned at `Positioned(top: -8, right: -8)` inside a transformed container (`Transform.scale`). When an item is scaled down or placed near the canvas border, `Clip.hardEdge` on line 662 clips the close button, making it unclickable or invisible. Additionally, parent gesture recognizers steal touch events on small items.
 - **Fix:** Render selection controls/delete handles in an unclipped overlay layer relative to the active item's bounding box.
@@ -70,6 +73,7 @@ Comprehensive audit and analysis of the Flutter mobile application (`AMOLED_fram
 ---
 
 ### 9. Rotation Interval Sync Ignores Out-of-Range Firmware Values
+- **Status:** **Fixed** (Clamped incoming intervals to valid bounds [2.0, 30.0] and added a warning log)
 - **Location:** [`lib/pages/frame_page.dart` (lines 336–338)](AMOLED_frame_mobile_app/lib/pages/frame_page.dart#L336-L338)
 - **Problem:** During playlist sync (`_syncPlaylistFromDevice`), the app checks `if (interval >= 2 && interval <= 30)`. If the device was configured with a different interval (e.g. 1s or 60s), the app silently ignores the value, leaving `_rotationSeconds` out of sync with actual hardware behavior without notifying the user.
 - **Fix:** Clamp incoming intervals to valid slider bounds `interval.toDouble().clamp(2.0, 30.0)` and log a warning if out-of-range values are normalized.

@@ -7,6 +7,9 @@ import 'package:flutter/rendering.dart';
 import 'package:image/image.dart' as image_lib;
 
 import '../models/editor_item.dart';
+import '../widgets/color_swatch_picker.dart';
+import '../widgets/editor_style_panel.dart';
+import '../widgets/emoji_sticker_picker.dart';
 
 class ImageEditorPage extends StatefulWidget {
   final Uint8List imageBytes;
@@ -90,131 +93,11 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
     setState(() => _bgColor = color);
   }
 
-  // ----- Android-keyboard style emoji/sticker picker -----
-  late final TabController _tabController;
 
-  static const Map<String, List<String>> _emojiCategories = {
-    'Smileys': [
-      '😀', '😁', '😂', '🤣', '😊', '😍', '😘', '😜', '🤪', '😎',
-      '🥳', '😇', '🙃', '🤩', '😢', '😭', '😡', '🤔', '😴', '🤗',
-      '😏', '😅', '🥰', '😋', '🤤', '😱', '🥺', '😤', '🤯', '🥶',
-    ],
-    'Hands & Hearts': [
-      '👍', '👎', '👏', '🙌', '🤝', '💪', '✌️', '🤞', '👌', '🤙',
-      '👋', '🤟', '🫶', '✋', '🖐️', '🙏',
-      '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '💔', '💯',
-      '💕', '💖', '💗', '💞',
-    ],
-    'Nature': [
-      '🌸', '🌺', '🌻', '🌈', '☀️', '🌙', '⚡', '❄️', '🍀', '🌊',
-      '🐶', '🐱', '🐼', '🦄', '🐝', '🦋', '🐾', '🐦', '🐟', '🦁',
-      '🌵', '🌴', '🍁', '🌹', '⭐', '🌟', '💫', '☁️',
-    ],
-    'Food': [
-      '🍕', '🍔', '🍰', '🎂', '☕', '🍦', '🍩', '🍓', '🍉', '🥑',
-      '🍎', '🍇', '🍒', '🍫', '🍿', '🌮', '🍟', '🍪',
-    ],
-    'Objects': [
-      '📷', '🎮', '🎵', '🎨', '📚', '✈️', '🚀', '⚽', '🎯', '💡',
-      '🎉', '🎊', '🎈', '🎁', '🏆', '🔥', '✨', '💰', '⏰', '📱',
-    ],
-  };
-
-  static const List<IconData> _stickerIcons = [
-    Icons.star, Icons.favorite, Icons.brightness_5, Icons.celebration,
-    Icons.pets, Icons.wb_sunny, Icons.auto_awesome, Icons.music_note,
-    Icons.local_pizza, Icons.cake, Icons.videogame_asset, Icons.rocket_launch,
-    Icons.emoji_emotions, Icons.mood, Icons.thumb_up, Icons.diamond,
-    Icons.local_fire_department, Icons.bolt, Icons.anchor, Icons.spa,
-  ];
-
-  static const List<Color> _colorPalette = [
-    Colors.white, Colors.black, Colors.grey,
-    Colors.red, Color(0xFFB71C1C), Color(0xFFFF8A80),
-    Colors.orange, Color(0xFFE65100), Color(0xFFFFCC80),
-    Colors.amber, Color(0xFFFFA000),
-    Colors.yellow, Color(0xFFF9A825),
-    Colors.lime, Color(0xFF9E9D24),
-    Colors.green, Color(0xFF1B5E20), Color(0xFFA5D6A7),
-    Colors.teal, Color(0xFF004D40),
-    Colors.cyan, Color(0xFF006064),
-    Colors.lightBlue, Colors.blue, Color(0xFF0D47A1), Color(0xFF90CAF9),
-    Colors.indigo, Color(0xFF1A237E),
-    Colors.purple, Color(0xFF4A148C), Color(0xFFCE93D8),
-    Colors.deepPurple,
-    Colors.pink, Color(0xFF880E4F), Color(0xFFF8BBD0),
-    Colors.brown, Color(0xFF3E2723),
-    Colors.blueGrey, Color(0xFFECEFF1),
-  ];
-
-  Future<void> _showCustomColorPicker(Color initial, ValueChanged<Color> onPicked) async {
-    final int argb = initial.toARGB32();
-    int r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF;
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final preview = Color.fromARGB(255, r, g, b);
-          Widget slider(String label, int value, ValueChanged<int> onChanged) {
-            return Row(
-              children: [
-                SizedBox(width: 16, child: Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12))),
-                Expanded(
-                  child: Slider(
-                    value: value.toDouble(),
-                    min: 0,
-                    max: 255,
-                    onChanged: (v) => setDialogState(() => onChanged(v.round())),
-                  ),
-                ),
-                SizedBox(width: 32, child: Text('$value', style: const TextStyle(color: Colors.white70, fontSize: 12))),
-              ],
-            );
-          }
-          return AlertDialog(
-            backgroundColor: Colors.grey.shade900,
-            title: const Text('Custom Color', style: TextStyle(color: Colors.white)),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: double.infinity,
-                  height: 50,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    color: preview,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.white24),
-                  ),
-                ),
-                slider('R', r, (v) => r = v),
-                slider('G', g, (v) => g = v),
-                slider('B', b, (v) => b = v),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  onPicked(Color.fromARGB(255, r, g, b));
-                  Navigator.pop(context);
-                },
-                child: const Text('Use this color'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: _emojiCategories.length + 1, vsync: this);
     _autoRotateIfPortrait();
   }
 
@@ -226,12 +109,6 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
   Future<void> _autoRotateIfPortrait() async {
     // Intentionally left empty. User requested portrait images 
     // maintain their original orientation.
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
   }
 
   void _addEmojiItem(String standardText) {
@@ -277,14 +154,6 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
   void _removeActiveItem() {
     if (_selectedIdx != null && _selectedIdx! < _placedItems.length) {
       _removeItemAt(_selectedIdx!);
-    }
-  }
-
-  void _setActiveItemColor(Color color) {
-    if (_selectedIdx != null && _selectedIdx! < _placedItems.length) {
-      setState(() {
-        _placedItems[_selectedIdx!].color = color;
-      });
     }
   }
 
@@ -395,102 +264,7 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
     }
   }
 
-  Widget _buildColorSwatches(Color activeColor) {
-    return SizedBox(
-      height: 36,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: _colorPalette.length,
-        itemBuilder: (ctx, idx) {
-          final c = _colorPalette[idx];
-          final isSelected = c == activeColor;
-          return GestureDetector(
-            onTap: () => _setActiveItemColor(c),
-            child: Container(
-              width: 30,
-              height: 30,
-              margin: const EdgeInsets.symmetric(horizontal: 4),
-              decoration: BoxDecoration(
-                color: c,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: isSelected ? Colors.cyanAccent : Colors.white24,
-                  width: isSelected ? 3 : 1,
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
 
-  Widget _styleToggleButton({required IconData icon, required bool active, required VoidCallback onTap}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      child: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: active ? Colors.amberAccent.withOpacity(0.25) : Colors.transparent,
-          border: Border.all(color: active ? Colors.amberAccent : Colors.white24),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Icon(icon, size: 20, color: active ? Colors.amberAccent : Colors.white70),
-      ),
-    );
-  }
-
-  Widget _fontChip(String label, String? family, String? currentFamily) {
-    final selected = family == currentFamily;
-    return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: ChoiceChip(
-        label: Text(label, style: TextStyle(fontFamily: family, fontSize: 12)),
-        selected: selected,
-        onSelected: (_) => setState(() {
-          if (_selectedIdx != null) _placedItems[_selectedIdx!].fontFamily = family;
-        }),
-        selectedColor: Colors.amberAccent,
-        backgroundColor: Colors.white10,
-        labelStyle: TextStyle(color: selected ? Colors.black : Colors.white70),
-      ),
-    );
-  }
-
-  Widget _buildEmojiGrid(List<String> emojis) {
-    return GridView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 8,
-        mainAxisSpacing: 2,
-        crossAxisSpacing: 2,
-      ),
-      itemCount: emojis.length,
-      itemBuilder: (ctx, idx) => InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: () => _addEmojiItem(emojis[idx]),
-        child: Center(child: Text(emojis[idx], style: const TextStyle(fontSize: 24))),
-      ),
-    );
-  }
-
-  Widget _buildStickerGrid() {
-    return GridView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 8,
-        mainAxisSpacing: 2,
-        crossAxisSpacing: 2,
-      ),
-      itemCount: _stickerIcons.length,
-      itemBuilder: (ctx, idx) => InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: () => _addStickerItem(_stickerIcons[idx]),
-        child: Center(child: Icon(_stickerIcons[idx], color: Colors.amberAccent, size: 22)),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -498,7 +272,6 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
         ? _placedItems[_selectedIdx!]
         : null;
 
-    final categoryNames = _emojiCategories.keys.toList();
     final bgGesturesEnabled = _repositioningBackground && !_isSaving;
 
     return Scaffold(
@@ -607,9 +380,9 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                           height: 30,
                           child: ListView.builder(
                             scrollDirection: Axis.horizontal,
-                            itemCount: _colorPalette.length,
+                            itemCount: ColorSwatchPicker.colorPalette.length,
                             itemBuilder: (ctx, idx) {
-                              final c = _colorPalette[idx];
+                              final c = ColorSwatchPicker.colorPalette[idx];
                               final isSelected = c == _bgColor;
                               return GestureDetector(
                                 onTap: () => _setBackgroundColor(c),
@@ -633,7 +406,7 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                       ),
                       const SizedBox(width: 6),
                       GestureDetector(
-                        onTap: () => _showCustomColorPicker(_bgColor, _setBackgroundColor),
+                        onTap: () => ColorSwatchPicker.showCustomColorPicker(context, _bgColor, _setBackgroundColor),
                         child: Container(
                           width: 30,
                           height: 30,
@@ -815,26 +588,7 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                                   ),
                                                 ),
                                               ),
-                                          // Small delete button pinned to the item's
-                                          // top-right corner, visible only while
-                                          // this item is selected.
-                                          if (isFocused && itemGesturesEnabled)
-                                            Positioned(
-                                              top: -8,
-                                              right: -8,
-                                              child: GestureDetector(
-                                                onTap: () => _removeItemAt(index),
-                                                child: Container(
-                                                  width: 20,
-                                                  height: 20,
-                                                  decoration: const BoxDecoration(
-                                                    color: Colors.red,
-                                                    shape: BoxShape.circle,
-                                                  ),
-                                                  child: const Icon(Icons.close, size: 12, color: Colors.white),
-                                                ),
-                                              ),
-                                            ),
+
                                         ],
                                       ),
                                         ),
@@ -865,181 +619,16 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         if (activeItem != null) ...[
-                          Row(
-                            children: [
-                              const Icon(Icons.photo_size_select_large_outlined, size: 18, color: Colors.white),
-                              Expanded(
-                                child: Slider(
-                                  value: activeItem.scale,
-                                  min: 0.3,
-                                  max: 4.0,
-                                  onChanged: (v) => setState(() => activeItem!.scale = v),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 40,
-                                child: Text(
-                                  '${(activeItem.scale * 100).round()}%',
-                                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                                ),
-                              ),
-                            ],
+                          EditorStylePanel(
+                            activeItem: activeItem,
+                            onChanged: () => setState(() {}),
+                            onDelete: _removeActiveItem,
                           ),
-                          const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              const Icon(Icons.rotate_right, size: 18, color: Colors.white),
-                              Expanded(
-                                child: Slider(
-                                  value: ((activeItem.rotation * 180 / math.pi) % 360 + 360) % 360,
-                                  min: 0,
-                                  max: 360,
-                                  onChanged: (v) => setState(() => activeItem!.rotation = v * math.pi / 180),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 40,
-                                child: Text(
-                                  '${(((activeItem.rotation * 180 / math.pi) % 360 + 360) % 360).round()}°',
-                                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (!activeItem.isSticker) ...[
-                            Row(
-                              children: [
-                                const Icon(Icons.format_size, size: 18, color: Colors.white),
-                                Expanded(
-                                  child: Slider(
-                                    value: activeItem.fontSize,
-                                    min: 12,
-                                    max: 90,
-                                    onChanged: (v) => setState(() => activeItem!.fontSize = v),
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 30,
-                                  child: Text(
-                                    activeItem.fontSize.round().toString(),
-                                    style: const TextStyle(color: Colors.white, fontSize: 12),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Row(
-                              children: [
-                                const Icon(Icons.space_bar, size: 18, color: Colors.white),
-                                Expanded(
-                                  child: Slider(
-                                    value: activeItem.letterSpacing,
-                                    min: -2,
-                                    max: 20,
-                                    onChanged: (v) => setState(() => activeItem!.letterSpacing = v),
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 30,
-                                  child: Text(
-                                    activeItem.letterSpacing.round().toString(),
-                                    style: const TextStyle(color: Colors.white, fontSize: 12),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                              children: [
-                                _styleToggleButton(
-                                  icon: Icons.format_bold,
-                                  active: activeItem.bold,
-                                  onTap: () => setState(() => activeItem!.bold = !activeItem.bold),
-                                ),
-                                _styleToggleButton(
-                                  icon: Icons.format_italic,
-                                  active: activeItem.italic,
-                                  onTap: () => setState(() => activeItem!.italic = !activeItem.italic),
-                                ),
-                                _styleToggleButton(
-                                  icon: Icons.format_underline,
-                                  active: activeItem.underline,
-                                  onTap: () => setState(() => activeItem!.underline = !activeItem.underline),
-                                ),
-                                _styleToggleButton(
-                                  icon: Icons.format_strikethrough,
-                                  active: activeItem.strikethrough,
-                                  onTap: () => setState(() => activeItem!.strikethrough = !activeItem.strikethrough),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            SizedBox(
-                              height: 34,
-                              child: ListView(
-                                scrollDirection: Axis.horizontal,
-                                children: [
-                                  _fontChip('Default', null, activeItem.fontFamily),
-                                  _fontChip('Serif', 'serif', activeItem.fontFamily),
-                                  _fontChip('Monospace', 'monospace', activeItem.fontFamily),
-                                  _fontChip('Condensed', 'sans-serif-condensed', activeItem.fontFamily),
-                                  _fontChip('Cursive', 'cursive', activeItem.fontFamily),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                          ],
-                          const Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text('COLOR', style: TextStyle(color: Colors.white54, fontWeight: FontWeight.bold, fontSize: 11, letterSpacing: 1)),
-                          ),
-                          const SizedBox(height: 4),
-                          _buildColorSwatches(activeItem.color),
-                          const SizedBox(height: 8),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.red.shade800,
-                                foregroundColor: Colors.white,
-                              ),
-                              onPressed: _removeActiveItem,
-                              icon: const Icon(Icons.delete),
-                              label: const Text('Delete Selected Item'),
-                            ),
-                          ),
-                          const Divider(color: Colors.white24),
                         ],
                         // ----- Android-keyboard style picker -----
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Column(
-                            children: [
-                              TabBar(
-                                controller: _tabController,
-                                isScrollable: true,
-                                labelColor: Colors.amberAccent,
-                                unselectedLabelColor: Colors.white54,
-                                indicatorColor: Colors.amberAccent,
-                                tabs: [
-                                  ...categoryNames.map((name) => Tab(text: name)),
-                                  const Tab(icon: Icon(Icons.emoji_emotions_outlined), text: 'Stickers'),
-                                ],
-                              ),
-                              SizedBox(
-                                height: 190,
-                                child: TabBarView(
-                                  controller: _tabController,
-                                  children: [
-                                    ...categoryNames.map((name) => _buildEmojiGrid(_emojiCategories[name]!)),
-                                    _buildStickerGrid(),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
+                        EmojiStickerPicker(
+                          onEmojiPicked: _addEmojiItem,
+                          onStickerPicked: _addStickerItem,
                         ),
                       ],
                     ),

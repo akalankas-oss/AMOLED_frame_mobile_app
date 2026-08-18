@@ -71,6 +71,14 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
   }
 
   TextPainter _makeTextPainter() {
+    double maxWidth = double.infinity;
+    if (_effect == _BannerEffect.blink ||
+        (_effect == _BannerEffect.scroll &&
+            (_direction == _ScrollDirection.topToBottom ||
+             _direction == _ScrollDirection.bottomToTop))) {
+      maxWidth = _canvasWidth;
+    }
+
     final tp = TextPainter(
       text: TextSpan(
         text: _textController.text,
@@ -78,7 +86,7 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
       ),
       textDirection: TextDirection.ltr,
     );
-    tp.layout();
+    tp.layout(minWidth: 0, maxWidth: maxWidth);
     return tp;
   }
 
@@ -86,6 +94,7 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
     final recorder = ui.PictureRecorder();
     // Draw directly on the native 960×192 landscape canvas — no rotation tricks.
     final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, _canvasWidth, _canvasHeight));
+    canvas.clipRect(const Rect.fromLTWH(0, 0, _canvasWidth, _canvasHeight));
 
     canvas.drawRect(const Rect.fromLTWH(0, 0, _canvasWidth, _canvasHeight), Paint()..color = _bgColor);
 

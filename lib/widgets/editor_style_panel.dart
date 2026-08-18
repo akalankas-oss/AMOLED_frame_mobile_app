@@ -22,7 +22,7 @@ class EditorStylePanel extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: active ? Colors.amberAccent.withOpacity(0.25) : Colors.transparent,
+          color: active ? Colors.amberAccent.withValues(alpha: 0.25) : Colors.transparent,
           border: Border.all(color: active ? Colors.amberAccent : Colors.white24),
           borderRadius: BorderRadius.circular(6),
         ),
