@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 class SentImage {
@@ -32,7 +33,7 @@ class SentImage {
   // so it is displayed right side up in landscape.
   final bool needsDisplayRotation;
 
-  // ── Sequence fields (Flash Banner etc.) ──────────────────────────────────
+  // ⚡ Sequence fields (Flash Banner etc.) ⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡
   /// True when this item represents a multi-frame animation.
   final bool isSequence;
 
@@ -61,11 +62,15 @@ class SentImage {
   List<int> get uploadedSequenceIndices =>
       sequenceDeviceIndices?.whereType<int>().toList() ?? [];
 
-  // ── Disk-persistence helpers ──────────────────────────────────────────────
+  // 💾 Disk-persistence helpers 💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾💾
 
   /// Write [bytes] to a temporary file and clear the in-memory reference.
   /// Subsequent calls to [loadFullBytes] will read from disk.
   Future<void> persistFullBytes(Uint8List bytes) async {
+    if (kIsWeb) {
+      _fullBytes = bytes;
+      return;
+    }
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/amoled_${label.hashCode}_${DateTime.now().microsecondsSinceEpoch}.jpg');
     await file.writeAsBytes(bytes, flush: true);
@@ -78,6 +83,7 @@ class SentImage {
   /// Returns null if neither is available.
   Future<Uint8List?> loadFullBytes() async {
     if (_fullBytes != null) return _fullBytes;
+    if (kIsWeb) return null; // Shouldn't happen on web if persisted correctly in _fullBytes
     if (_fullBytesFile != null && await _fullBytesFile!.exists()) {
       return _fullBytesFile!.readAsBytes();
     }
@@ -91,6 +97,10 @@ class SentImage {
 
   /// Deletes the persisted temp file from disk (call when the image is removed).
   Future<void> deletePersistedFile() async {
+    if (kIsWeb) {
+      _fullBytes = null;
+      return;
+    }
     final f = _fullBytesFile;
     if (f != null && await f.exists()) {
       await f.delete();
@@ -98,11 +108,15 @@ class SentImage {
     }
   }
 
-  // ── Sequence frame disk-persistence helpers ───────────────────────────────
+  // 🎬 Sequence frame disk-persistence helpers 🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬
 
   /// Write each sequence frame to a temp file and clear in-memory frame bytes.
   Future<void> persistSequenceFrames() async {
     if (sequenceFrames == null) return;
+    if (kIsWeb) {
+      // Keep in memory
+      return;
+    }
     final dir = await getTemporaryDirectory();
     final files = <File?>[];
     for (int i = 0; i < sequenceFrames!.length; i++) {
@@ -116,10 +130,11 @@ class SentImage {
 
   /// Load the bytes for a single sequence frame from disk (or in-memory fallback).
   Future<Uint8List?> loadSequenceFrame(int index) async {
-    // In-memory fallback (before persistence)
+    // In-memory fallback (before persistence, or on web)
     if (sequenceFrames != null && index < sequenceFrames!.length) {
       return sequenceFrames![index];
     }
+    if (kIsWeb) return null;
     final files = sequenceFrameFiles;
     if (files != null && index < files.length && files[index] != null) {
       final f = files[index]!;
@@ -130,6 +145,10 @@ class SentImage {
 
   /// Deletes all persisted sequence frame temp files from disk.
   Future<void> deletePersistedSequenceFiles() async {
+    if (kIsWeb) {
+      sequenceFrames = null;
+      return;
+    }
     final files = sequenceFrameFiles;
     if (files == null) return;
     for (final f in files) {

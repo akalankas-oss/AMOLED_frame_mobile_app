@@ -10,6 +10,7 @@ import '../models/editor_item.dart';
 import '../widgets/color_swatch_picker.dart';
 import '../widgets/editor_style_panel.dart';
 import '../widgets/emoji_sticker_picker.dart';
+import '../widgets/neumorphic_components.dart';
 
 class ImageEditorPage extends StatefulWidget {
   final Uint8List imageBytes;
@@ -20,46 +21,27 @@ class ImageEditorPage extends StatefulWidget {
 }
 
 class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProviderStateMixin {
-  // Fixed panel resolution. The editor canvas is ALWAYS this shape,
-  // regardless of what size/ratio the incoming image is. Using
-  // BoxFit.contain for the background image (see below) means the whole
-  // photo is always visible inside this canvas — never invisibly cropped
-  // away — and you can pinch-zoom in from there to focus on any part of it.
-  // Native landscape canvas — 960×192 matches the panel's physical layout.
   static const double _canvasWidth = 960;
   static const double _canvasHeight = 192;
-  // Actual rendered size of the canvas Stack (updated on every layout pass).
-  // AspectRatio only guarantees the 192:960 ratio, not this exact absolute
-  // size, so new items are centered using this rather than the constants.
   Size? _canvasSize;
 
   final GlobalKey _boundaryKey = GlobalKey();
-  // Key on the Stack that actually holds the draggable items. Used to convert
-  // global (screen) pointer coordinates into this widget's local coordinate
-  // space via RenderBox.globalToLocal.
   final GlobalKey _stackKey = GlobalKey();
 
   final List<EditorItem> _placedItems = [];
   int? _selectedIdx;
   bool _isSaving = false;
 
-  // State kept during an active one/two-finger gesture on a placed item.
   Offset? _dragAnchor;
   double? _itemStartScale;
   double? _itemStartRotation;
 
-  // ----- Background photo repositioning (pan + pinch zoom + rotate) -----
-  // This is the "zoom +/- to show only the part of the image you want"
-  // control: drag to pan, pinch to zoom, twist with two fingers to rotate,
-  // right on the canvas.
   bool _repositioningBackground = false;
   Offset _bgOffset = Offset.zero;
   double _bgScale = 1.0;
-  double _bgRotation = 0.0; // radians
+  double _bgRotation = 0.0;
   double? _bgGestureStartScale;
   double? _bgGestureStartRotation;
-  // Fills any letterboxed space left around the photo (e.g. when its
-  // aspect ratio doesn't exactly match the 192x960 panel).
   Color _bgColor = Colors.black;
 
   void _toggleReposition() {
@@ -93,21 +75,14 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
     setState(() => _bgColor = color);
   }
 
-
-
   @override
   void initState() {
     super.initState();
     _autoRotateIfPortrait();
   }
 
-  // A portrait-oriented photo (taller than wide) shown with BoxFit.contain
-  // inside this landscape-shaped canvas would be constrained by the
-  // canvas's short dimension, appearing as a small strip in the middle.
-  // Rotating it 90° up front makes it landscape-shaped, filling the frame
-  // properly. The existing rotate controls still let you undo/adjust this.
   Future<void> _autoRotateIfPortrait() async {
-    // Intentionally left empty. User requested portrait images 
+    // Intentionally left empty. User requested portrait images
     // maintain their original orientation.
   }
 
@@ -200,15 +175,9 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
       final RenderRepaintBoundary boundary =
           _boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
 
-      // The canvas is now a true 960×192 landscape widget (no RotatedBox).
-      // boundary.size.width is the on-screen logical width of the landscape strip.
-      // We need pixelRatio so that: logical_width × pixelRatio == _canvasWidth (960).
       final double renderedLogicalWidth = boundary.size.width;
       final double neededPixelRatio = _canvasWidth / renderedLogicalWidth;
 
-      // Capture at approximately 960×192 physical pixels.
-      // NOTE: floating-point pixelRatio and subpixel rendering mean the actual
-      // captured dimensions can be off by ±1px (e.g. 191×959 or 193×961).
       final ui.Image captured = await boundary.toImage(pixelRatio: neededPixelRatio);
 
       final ByteData? rawData =
@@ -222,17 +191,10 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
           numChannels: 4,
         );
 
-        // Rotate 90° CW into native panel orientation (192×960). The firmware
-        // memcpys decoded pixels directly into a 192×960 framebuffer.
         final rotated = image_lib.copyRotate(imgLib, angle: 90);
 
-        // STRICT DIMENSION GUARD: floating-point pixelRatio rounding means
-        // 'rotated' could be 191×959 or 193×961 rather than exactly 192×960.
-        // The ESP32-P4 firmware does a direct memcpy into a fixed 192×960
-        // framebuffer — any off-by-one causes image shearing, line corruption,
-        // or out-of-bounds memory writes. Force exact dimensions here.
-        final int nativeW = _canvasHeight.round(); // 192  (after 90° rotation, width == canvas height)
-        final int nativeH = _canvasWidth.round();  // 960  (after 90° rotation, height == canvas width)
+        final int nativeW = _canvasHeight.round();
+        final int nativeH = _canvasWidth.round();
         final image_lib.Image finalImg = (rotated.width == nativeW && rotated.height == nativeH)
             ? rotated
             : image_lib.copyResize(
@@ -250,9 +212,6 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
       debugPrint('Export failed: $e');
       if (mounted) {
         setState(() { _isSaving = false; });
-        // Show a visible error — previously this only printed to debug console
-        // (invisible in release builds), leaving the editor stuck with a
-        // frozen save spinner and no way to recover.
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Export failed: $e'),
@@ -264,8 +223,6 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
     }
   }
 
-
-
   @override
   Widget build(BuildContext context) {
     EditorItem? activeItem = (_selectedIdx != null && _selectedIdx! < _placedItems.length)
@@ -275,192 +232,100 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
     final bgGesturesEnabled = _repositioningBackground && !_isSaving;
 
     return Scaffold(
-      backgroundColor: Colors.black87,
+      backgroundColor: Colors.black, // Pure AMOLED black
       appBar: AppBar(
-        title: const Text('Move & Style Elements'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        title: const Text('Design Canvas', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        iconTheme: const IconThemeData(color: Colors.white),
+        leading: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: NeumorphicIconButton(
+            icon: const Icon(Icons.close, size: 20, color: Colors.white),
+            onPressed: () => Navigator.maybePop(context),
+            borderRadius: 24,
+            padding: EdgeInsets.zero,
+          ),
+        ),
         actions: [
           if (!_isSaving) ...[
-            IconButton(
-              icon: Icon(_repositioningBackground ? Icons.check_circle : Icons.edit),
-              tooltip: _repositioningBackground ? 'Done editing photo' : 'Edit photo (move/zoom/rotate)',
-              onPressed: _toggleReposition,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+              child: NeumorphicIconButton(
+                icon: Icon(_repositioningBackground ? Icons.check_circle : Icons.crop_rotate, 
+                           color: _repositioningBackground ? Colors.greenAccent : Colors.cyanAccent, size: 20),
+                isActive: _repositioningBackground,
+                onPressed: _toggleReposition,
+                borderRadius: 24,
+                padding: const EdgeInsets.all(8.0),
+              ),
             ),
-            IconButton(
-              icon: const Icon(Icons.text_fields),
-              tooltip: 'Add text',
-              onPressed: _openCustomTextInput,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+              child: NeumorphicIconButton(
+                icon: const Icon(Icons.text_fields, color: Colors.amberAccent, size: 20),
+                onPressed: _openCustomTextInput,
+                borderRadius: 24,
+                padding: const EdgeInsets.all(8.0),
+              ),
             ),
-            IconButton(icon: const Icon(Icons.check), onPressed: _exportCanvas),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+              child: NeumorphicCard(
+                borderRadius: 24, // Pill shape
+                padding: EdgeInsets.zero,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(24),
+                    gradient: const LinearGradient(
+                      colors: [Colors.pinkAccent, Colors.orangeAccent],
+                    ),
+                  ),
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.check, size: 18),
+                    label: const Text('Save', style: TextStyle(fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      backgroundColor: Colors.transparent, // Let gradient show through
+                      shadowColor: Colors.transparent,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                    ),
+                    onPressed: _exportCanvas,
+                  ),
+                ),
+              ),
+            ),
           ]
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          if (_repositioningBackground)
-            Container(
-              width: double.infinity,
-              color: Colors.amber.shade700,
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.info_outline, size: 16, color: Colors.black),
-                      const SizedBox(width: 6),
-                      const Expanded(
-                        child: Text(
-                          'Drag to move • Pinch to zoom • Twist to rotate',
-                          style: TextStyle(color: Colors.black, fontSize: 12),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: _resetBackgroundTransform,
-                        child: const Text('Reset', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.rotate_left, color: Colors.black),
-                        tooltip: 'Rotate 90° left',
-                        onPressed: () => _quickRotateBackground(-math.pi / 2),
-                      ),
-                      Expanded(
-                        child: Slider(
-                          value: ((_bgRotation * 180 / math.pi) % 360 + 360) % 360,
-                          min: 0,
-                          max: 360,
-                          activeColor: Colors.black,
-                          onChanged: (v) => setState(() => _bgRotation = v * math.pi / 180),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.rotate_right, color: Colors.black),
-                        tooltip: 'Rotate 90° right',
-                        onPressed: () => _quickRotateBackground(math.pi / 2),
-                      ),
-                      SizedBox(
-                        width: 40,
-                        child: Text(
-                          '${(((_bgRotation * 180 / math.pi) % 360 + 360) % 360).round()}°',
-                          style: const TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.zoom_out, color: Colors.black),
-                        tooltip: 'Zoom out',
-                        onPressed: () => _stepZoomBackground(-0.1),
-                      ),
-                      Expanded(
-                        child: Text(
-                          'Zoom: ${(_bgScale * 100).round()}%',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.zoom_in, color: Colors.black),
-                        tooltip: 'Zoom in',
-                        onPressed: () => _stepZoomBackground(0.1),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      const Text('Background:', style: TextStyle(color: Colors.black, fontSize: 12)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: SizedBox(
-                          height: 30,
-                          child: ListView.builder(
-                            scrollDirection: Axis.horizontal,
-                            itemCount: ColorSwatchPicker.colorPalette.length,
-                            itemBuilder: (ctx, idx) {
-                              final c = ColorSwatchPicker.colorPalette[idx];
-                              final isSelected = c == _bgColor;
-                              return GestureDetector(
-                                onTap: () => _setBackgroundColor(c),
-                                child: Container(
-                                  width: 26,
-                                  height: 26,
-                                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                                  decoration: BoxDecoration(
-                                    color: c,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: isSelected ? Colors.cyanAccent : Colors.black26,
-                                      width: isSelected ? 3 : 1,
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      GestureDetector(
-                        onTap: () => ColorSwatchPicker.showCustomColorPicker(context, _bgColor, _setBackgroundColor),
-                        child: Container(
-                          width: 30,
-                          height: 30,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.black45, width: 1.5),
-                            gradient: const SweepGradient(
-                              colors: [Colors.red, Colors.yellow, Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.red],
-                            ),
-                          ),
-                          child: const Icon(Icons.add, size: 16, color: Colors.white),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          Expanded(
-            flex: 3,
-            child: Center(
-              // The panel's raw pixel data is 960x192 (landscape).
-              // The Container below just draws a visible border around the
-              // canvas boundary as a visual guide.
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.amberAccent, width: 2),
-                ),
-                // Canvas is native 960×192 landscape — no RotatedBox needed.
-                child: AspectRatio(
-                  aspectRatio: _canvasWidth / _canvasHeight,
-                  child: RepaintBoundary(
-                    key: _boundaryKey,
-                    child: LayoutBuilder(
+          // Main Column for Canvas and Bottom Tools
+          Column(
+            children: [
+              // Canvas Area
+              Expanded(
+                flex: 4,
+                child: Center(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black, // true black
+                      border: Border.all(color: Colors.white10, width: 1),
+                      borderRadius: BorderRadius.circular(16),
+                      // Soft inner shadow can't be easily done natively, removing glowing shadow as requested
+                    ),
+                    child: AspectRatio(
+                      aspectRatio: _canvasWidth / _canvasHeight,
+                      child: RepaintBoundary(
+                        key: _boundaryKey,
+                        child: LayoutBuilder(
                           builder: (context, constraints) {
-                            // AspectRatio only fixes the RATIO, not the
-                            // absolute size — the actual rendered box could
-                            // be any size that keeps that ratio. Track it so
-                            // new items can be centered correctly (using the
-                            // fixed 192/960 constants directly here caused
-                            // items to land outside the visible canvas
-                            // whenever the real rendered size differed).
                             _canvasSize = constraints.biggest;
                             return Stack(
                               key: _stackKey,
                               clipBehavior: Clip.hardEdge,
                               children: [
-                                // Background photo: draggable/zoomable/rotatable
-                                // while in reposition mode. ClipRect keeps it
-                                // confined to the panel bounds no matter how far
-                                // it's panned. The colored Container behind it
-                                // fills any letterboxed space left where the
-                                // photo's aspect ratio doesn't exactly match the
-                                // panel (BoxFit.contain leaves margins there).
                                 Positioned.fill(
                                   child: ClipRect(
                                     child: Container(
@@ -511,10 +376,6 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                       onTap: !itemGesturesEnabled ? null : () {
                                         setState(() { _selectedIdx = index; });
                                       },
-                                      // Single gesture recognizer handles move
-                                      // (1 finger, in ANY direction: up, down,
-                                      // left, right), and pinch-resize + twist-
-                                      // to-rotate (2 fingers) together.
                                       onScaleStart: !itemGesturesEnabled ? null : (details) {
                                         final box = _stackKey.currentContext!.findRenderObject() as RenderBox;
                                         final localPos = box.globalToLocal(details.focalPoint);
@@ -556,41 +417,56 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                                 ),
                                                 decoration: BoxDecoration(
                                                   border: Border.all(
-                                                      color: isFocused ? Colors.cyan : Colors.transparent,
-                                                      width: 2
+                                                    color: isFocused ? Colors.cyanAccent : Colors.transparent,
+                                                    width: 2,
                                                   ),
-                                                  borderRadius: BorderRadius.circular(6),
+                                                  borderRadius: BorderRadius.circular(12),
                                                 ),
                                                 child: item.isSticker
                                                     ? Container(
-                                                  padding: const EdgeInsets.all(8),
-                                                  decoration: BoxDecoration(
-                                                    color: item.color,
-                                                    shape: BoxShape.circle,
-                                                  ),
-                                                  child: Icon(item.stickerIcon, size: 36, color: Colors.white),
-                                                )
+                                                        padding: const EdgeInsets.all(8),
+                                                        decoration: BoxDecoration(
+                                                          color: item.color,
+                                                          shape: BoxShape.circle,
+                                                        ),
+                                                        child: Icon(item.stickerIcon, size: 36, color: Colors.white),
+                                                      )
                                                     : Text(
-                                                  item.content,
-                                                  textAlign: TextAlign.center,
-                                                  softWrap: true,
-                                                  style: TextStyle(
-                                                    fontSize: item.fontSize,
-                                                    fontFamily: item.fontFamily,
-                                                    color: item.color,
-                                                    fontWeight: item.bold ? FontWeight.bold : FontWeight.normal,
-                                                    fontStyle: item.italic ? FontStyle.italic : FontStyle.normal,
-                                                    letterSpacing: item.letterSpacing,
-                                                    decoration: TextDecoration.combine([
-                                                      if (item.underline) TextDecoration.underline,
-                                                      if (item.strikethrough) TextDecoration.lineThrough,
-                                                    ]),
+                                                        item.content,
+                                                        textAlign: TextAlign.center,
+                                                        softWrap: true,
+                                                        style: TextStyle(
+                                                          fontSize: item.fontSize,
+                                                          fontFamily: item.fontFamily,
+                                                          color: item.color,
+                                                          fontWeight: item.bold ? FontWeight.bold : FontWeight.normal,
+                                                          fontStyle: item.italic ? FontStyle.italic : FontStyle.normal,
+                                                          letterSpacing: item.letterSpacing,
+                                                          decoration: TextDecoration.combine([
+                                                            if (item.underline) TextDecoration.underline,
+                                                            if (item.strikethrough) TextDecoration.lineThrough,
+                                                          ]),
+                                                        ),
+                                                      ),
+                                              ),
+                                              if (isFocused && !_isSaving)
+                                                Positioned(
+                                                  right: 0,
+                                                  top: 0,
+                                                  child: GestureDetector(
+                                                    onTap: _removeActiveItem,
+                                                    child: Container(
+                                                      padding: const EdgeInsets.all(4),
+                                                      decoration: const BoxDecoration(
+                                                        color: Colors.pinkAccent,
+                                                        shape: BoxShape.circle,
+                                                      ),
+                                                      child: const Icon(Icons.close, size: 16, color: Colors.white),
+                                                    ),
                                                   ),
                                                 ),
-                                              ),
-
-                                        ],
-                                      ),
+                                            ],
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -598,45 +474,174 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                 }),
                               ],
                             );
-                          }
+                          },
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-          Expanded(
-            flex: 2,
-            child: Opacity(
-              opacity: _isSaving ? 0.0 : 1.0,
-              child: IgnorePointer(
-                ignoring: _isSaving,
-                child: Container(
-                  color: Colors.grey.shade900,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (activeItem != null) ...[
-                          EditorStylePanel(
-                            activeItem: activeItem,
-                            onChanged: () => setState(() {}),
-                            onDelete: _removeActiveItem,
+
+              // Bottom Panel (Styling & Stickers)
+              Expanded(
+                flex: 3,
+                child: Opacity(
+                  opacity: _isSaving ? 0.0 : 1.0,
+                  child: IgnorePointer(
+                    ignoring: _isSaving,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                      child: NeumorphicCard(
+                        borderRadius: 24,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (activeItem != null) ...[
+                                EditorStylePanel(
+                                  activeItem: activeItem,
+                                  onChanged: () => setState(() {}),
+                                  onDelete: _removeActiveItem,
+                                ),
+                              ],
+                              EmojiStickerPicker(
+                                onEmojiPicked: _addEmojiItem,
+                                onStickerPicked: _addStickerItem,
+                              ),
+                            ],
                           ),
-                        ],
-                        // ----- Android-keyboard style picker -----
-                        EmojiStickerPicker(
-                          onEmojiPicked: _addEmojiItem,
-                          onStickerPicked: _addStickerItem,
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
+            ],
           ),
+
+          // Floating Reposition Panel
+          if (_repositioningBackground)
+            Positioned(
+              bottom: MediaQuery.of(context).size.height * 0.4, // float above the bottom panel
+              left: 16,
+              right: 16,
+              child: RepaintBoundary(
+                child: NeumorphicCard(
+                  borderRadius: 24,
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Background Tools',
+                            style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold),
+                          ),
+                          TextButton.icon(
+                            onPressed: _resetBackgroundTransform,
+                            icon: const Icon(Icons.restore, color: Colors.pinkAccent, size: 16),
+                            label: const Text('Reset', style: TextStyle(color: Colors.pinkAccent)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          NeumorphicIconButton(
+                            icon: const Icon(Icons.rotate_left, color: Colors.white),
+                            onPressed: () => _quickRotateBackground(-math.pi / 2),
+                            borderRadius: 24,
+                            padding: const EdgeInsets.all(8),
+                          ),
+                          NeumorphicIconButton(
+                            icon: const Icon(Icons.zoom_out, color: Colors.white),
+                            onPressed: () => _stepZoomBackground(-0.1),
+                            borderRadius: 24,
+                            padding: const EdgeInsets.all(8),
+                          ),
+                          NeumorphicIconButton(
+                            icon: const Icon(Icons.zoom_in, color: Colors.white),
+                            onPressed: () => _stepZoomBackground(0.1),
+                            borderRadius: 24,
+                            padding: const EdgeInsets.all(8),
+                          ),
+                          NeumorphicIconButton(
+                            icon: const Icon(Icons.rotate_right, color: Colors.white),
+                            onPressed: () => _quickRotateBackground(math.pi / 2),
+                            borderRadius: 24,
+                            padding: const EdgeInsets.all(8),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        const Text('Color:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: SizedBox(
+                            height: 30,
+                            child: ListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: ColorSwatchPicker.colorPalette.length,
+                              itemBuilder: (ctx, idx) {
+                                final c = ColorSwatchPicker.colorPalette[idx];
+                                final isSelected = c == _bgColor;
+                                return GestureDetector(
+                                  onTap: () => _setBackgroundColor(c),
+                                  child: Container(
+                                    width: 26,
+                                    height: 26,
+                                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                                    decoration: BoxDecoration(
+                                      color: c,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: isSelected ? Colors.cyanAccent : Colors.white24,
+                                        width: isSelected ? 2 : 1,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        GestureDetector(
+                          onTap: () => ColorSwatchPicker.showCustomColorPicker(context, _bgColor, _setBackgroundColor),
+                          child: Container(
+                            width: 30,
+                            height: 30,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white24, width: 1.5),
+                              gradient: const SweepGradient(
+                                colors: [Colors.red, Colors.yellow, Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.red],
+                              ),
+                            ),
+                            child: const Icon(Icons.add, size: 16, color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              ),
+            ),
+            
+          if (_isSaving)
+            Container(
+              color: Colors.black54,
+              child: const Center(
+                child: CircularProgressIndicator(color: Colors.cyanAccent),
+              ),
+            ),
         ],
       ),
     );

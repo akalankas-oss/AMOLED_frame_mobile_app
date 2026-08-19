@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import '../models/editor_item.dart';
 import 'color_swatch_picker.dart';
+import 'neumorphic_components.dart';
 
 class EditorStylePanel extends StatelessWidget {
   final EditorItem activeItem;
@@ -16,18 +17,12 @@ class EditorStylePanel extends StatelessWidget {
   });
 
   Widget _styleToggleButton({required IconData icon, required bool active, required VoidCallback onTap}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      child: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: active ? Colors.amberAccent.withValues(alpha: 0.25) : Colors.transparent,
-          border: Border.all(color: active ? Colors.amberAccent : Colors.white24),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Icon(icon, size: 20, color: active ? Colors.amberAccent : Colors.white70),
-      ),
+    return NeumorphicIconButton(
+      icon: Icon(icon, size: 20, color: active ? Colors.amberAccent : Colors.white70),
+      isActive: active,
+      onPressed: onTap,
+      borderRadius: 8,
+      padding: const EdgeInsets.all(8),
     );
   }
 
