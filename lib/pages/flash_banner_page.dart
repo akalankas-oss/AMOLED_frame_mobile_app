@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as image_lib;
+import '../widgets/neumorphic_components.dart';
 
 enum _BannerEffect { scroll, blink }
 enum _ScrollDirection { rightToLeft, leftToRight, topToBottom, bottomToTop }
@@ -186,109 +187,225 @@ class _FlashBannerPageState extends State<FlashBannerPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.black,
       appBar: AppBar(
-        title: const Text('Flash Banner'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: NeumorphicIconButton(
+            icon: const Icon(Icons.arrow_back, size: 20, color: Colors.white),
+            onPressed: () => Navigator.maybePop(context),
+            borderRadius: 20,
+            padding: EdgeInsets.zero,
+          ),
+        ),
+        title: const Text(
+          'Flash Banner',
+          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 18),
+        ),
         actions: [
-          if (_generating)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
-            )
-          else
-            IconButton(icon: const Icon(Icons.check), onPressed: _confirm),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+            child: _generating
+                ? const Center(
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(color: AppColors.cyanAccent, strokeWidth: 2.5),
+                    ),
+                  )
+                : NeumorphicButton(
+                    onPressed: _textController.text.trim().isEmpty ? null : _confirm,
+                    gradient: AppColors.primaryGradient,
+                    icon: const Icon(Icons.bolt, size: 18, color: Colors.white),
+                    label: 'Generate',
+                    borderRadius: 20,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  ),
+          ),
         ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            TextField(
-              controller: _textController,
-              decoration: const InputDecoration(
-                labelText: 'Banner text',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 16),
-            const Text('Effect', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            SegmentedButton<_BannerEffect>(
-              segments: const [
-                ButtonSegment(value: _BannerEffect.scroll, label: Text('Scroll'), icon: Icon(Icons.swap_horiz)),
-                ButtonSegment(value: _BannerEffect.blink, label: Text('Blink')),
-              ],
-              selected: {_effect},
-              onSelectionChanged: (s) => setState(() => _effect = s.first),
-            ),
-            if (_effect == _BannerEffect.scroll) ...[
-              const SizedBox(height: 16),
-              const Text('Scroll Direction', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              SegmentedButton<_ScrollDirection>(
-                segments: const [
-                  ButtonSegment(value: _ScrollDirection.rightToLeft, icon: Icon(Icons.arrow_back)),
-                  ButtonSegment(value: _ScrollDirection.leftToRight, icon: Icon(Icons.arrow_forward)),
-                  ButtonSegment(value: _ScrollDirection.topToBottom, icon: Icon(Icons.arrow_downward)),
-                  ButtonSegment(value: _ScrollDirection.bottomToTop, icon: Icon(Icons.arrow_upward)),
-                ],
-                selected: {_direction},
-                onSelectionChanged: (s) => setState(() => _direction = s.first),
-                showSelectedIcon: false,
-              ),
-            ],
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Icon(Icons.format_size),
-                Expanded(
-                  child: Slider(
-                    value: _fontSize,
-                    min: 40,
-                    max: 160,
-                    onChanged: (v) => setState(() => _fontSize = v),
+            // ── Live Inset Preview ──────────────────────────────────────────
+            NeumorphicCard(
+              isInset: true,
+              borderRadius: 18,
+              padding: const EdgeInsets.all(6),
+              child: AspectRatio(
+                aspectRatio: _canvasWidth / _canvasHeight,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: _bgColor,
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                ),
-                SizedBox(width: 36, child: Text(_fontSize.round().toString())),
-              ],
-            ),
-            const SizedBox(height: 8),
-            const Text('Text color', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-            _colorSwatches(_textColor, (c) => setState(() => _textColor = c)),
-            const SizedBox(height: 12),
-            const Text('Background color', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-            _colorSwatches(_bgColor, (c) => setState(() => _bgColor = c)),
-            const SizedBox(height: 20),
-            AspectRatio(
-              aspectRatio: _canvasWidth / _canvasHeight,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: _bgColor,
-                  border: Border.all(color: Colors.grey),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Center(
-                  child: Text(
-                    _textController.text,
-                    style: TextStyle(
-                      color: _textColor,
-                      fontSize: _fontSize / 4,
-                      fontWeight: FontWeight.bold,
+                  child: Center(
+                    child: Text(
+                      _textController.text.isEmpty ? 'PREVIEW' : _textController.text,
+                      style: TextStyle(
+                        color: _textController.text.isEmpty ? Colors.white24 : _textColor,
+                        fontSize: _fontSize / 4,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
               _effect == _BannerEffect.scroll
-                  ? 'Preview (not to scale) — the real banner scrolls across the panel.'
-                  : 'Preview (not to scale) — the real banner blinks on/off on the panel.',
-              style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  ? 'Preview • Scrolls across the 960×192 AMOLED frame'
+                  : 'Preview • Blinks on and off on the 960×192 AMOLED frame',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white38, fontSize: 11),
             ),
+
+            const SizedBox(height: 16),
+
+            // ── Text Input Card ──────────────────────────────────────────────
+            NeumorphicCard(
+              borderRadius: 18,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              child: TextField(
+                controller: _textController,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+                decoration: const InputDecoration(
+                  labelText: 'Banner Text',
+                  labelStyle: TextStyle(color: AppColors.cyanAccent),
+                  border: InputBorder.none,
+                  hintText: 'Type your message...',
+                  hintStyle: TextStyle(color: Colors.white30),
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+
+            const SizedBox(height: 14),
+
+            // ── Effects & Animation Card ─────────────────────────────────────
+            NeumorphicCard(
+              borderRadius: 18,
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Animation Effect', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: NeumorphicButton(
+                          isActive: _effect == _BannerEffect.scroll,
+                          onPressed: () => setState(() => _effect = _BannerEffect.scroll),
+                          icon: const Icon(Icons.swap_horiz, size: 18, color: AppColors.cyanAccent),
+                          label: 'Scroll',
+                          borderRadius: 14,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: NeumorphicButton(
+                          isActive: _effect == _BannerEffect.blink,
+                          onPressed: () => setState(() => _effect = _BannerEffect.blink),
+                          icon: const Icon(Icons.flash_on, size: 18, color: AppColors.pinkAccent),
+                          label: 'Blink',
+                          borderRadius: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_effect == _BannerEffect.scroll) ...[
+                    const SizedBox(height: 14),
+                    const Text('Scroll Direction', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        NeumorphicIconButton(
+                          icon: const Icon(Icons.arrow_back, color: Colors.white),
+                          isActive: _direction == _ScrollDirection.rightToLeft,
+                          onPressed: () => setState(() => _direction = _ScrollDirection.rightToLeft),
+                          tooltip: 'Right to Left',
+                        ),
+                        NeumorphicIconButton(
+                          icon: const Icon(Icons.arrow_forward, color: Colors.white),
+                          isActive: _direction == _ScrollDirection.leftToRight,
+                          onPressed: () => setState(() => _direction = _ScrollDirection.leftToRight),
+                          tooltip: 'Left to Right',
+                        ),
+                        NeumorphicIconButton(
+                          icon: const Icon(Icons.arrow_downward, color: Colors.white),
+                          isActive: _direction == _ScrollDirection.topToBottom,
+                          onPressed: () => setState(() => _direction = _ScrollDirection.topToBottom),
+                          tooltip: 'Top to Bottom',
+                        ),
+                        NeumorphicIconButton(
+                          icon: const Icon(Icons.arrow_upward, color: Colors.white),
+                          isActive: _direction == _ScrollDirection.bottomToTop,
+                          onPressed: () => setState(() => _direction = _ScrollDirection.bottomToTop),
+                          tooltip: 'Bottom to Top',
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 14),
+
+            // ── Typography & Colors Card ─────────────────────────────────────
+            NeumorphicCard(
+              borderRadius: 18,
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.format_size, size: 20, color: AppColors.amberAccent),
+                      const SizedBox(width: 8),
+                      const Text('Font Size', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                      Expanded(
+                        child: Slider(
+                          value: _fontSize,
+                          min: 40,
+                          max: 160,
+                          activeColor: AppColors.cyanAccent,
+                          inactiveColor: AppColors.surfaceElevatedLighter,
+                          onChanged: (v) => setState(() => _fontSize = v),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceInset,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          _fontSize.round().toString(),
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('Text Color', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70, fontSize: 13)),
+                  const SizedBox(height: 6),
+                  _colorSwatches(_textColor, (c) => setState(() => _textColor = c)),
+                  const SizedBox(height: 12),
+                  const Text('Background Color', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70, fontSize: 13)),
+                  const SizedBox(height: 6),
+                  _colorSwatches(_bgColor, (c) => setState(() => _bgColor = c)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
           ],
         ),
       ),

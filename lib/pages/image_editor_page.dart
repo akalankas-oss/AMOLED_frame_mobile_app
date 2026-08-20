@@ -271,29 +271,14 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
-              child: NeumorphicCard(
-                borderRadius: 24, // Pill shape
-                padding: EdgeInsets.zero,
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(24),
-                    gradient: const LinearGradient(
-                      colors: [Colors.pinkAccent, Colors.orangeAccent],
-                    ),
-                  ),
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.check, size: 18),
-                    label: const Text('Save', style: TextStyle(fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      backgroundColor: Colors.transparent, // Let gradient show through
-                      shadowColor: Colors.transparent,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                    ),
-                    onPressed: _exportCanvas,
-                  ),
-                ),
+              child: NeumorphicButton(
+                borderRadius: 24,
+                gradient: AppColors.primaryGradient,
+                icon: const Icon(Icons.check, size: 18, color: Colors.white),
+                label: 'Save',
+                textColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                onPressed: _exportCanvas,
               ),
             ),
           ]

@@ -12,6 +12,7 @@ import '../utils/image_utils.dart';
 import 'flash_banner_page.dart';
 import 'image_editor_page.dart';
 import 'text_composer_page.dart';
+import '../widgets/neumorphic_components.dart';
 
 // ── Animated sequence thumbnail ───────────────────────────────────────────
 /// Cycles through the thumbnails of a multi-frame sequence at ~8 fps.
@@ -209,6 +210,123 @@ class _FramePageState extends State<FramePage> {
     } catch (e) {
       _addLog('Could not sync rotation state: $e');
     }
+  }
+
+  void _showAddContentSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: AppColors.surfaceElevated,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.only(top: 8, bottom: 32, left: 16, right: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 24),
+                decoration: BoxDecoration(
+                  color: Colors.grey[700],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const Text(
+                'Add Content',
+                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 24),
+              _buildAddOption(
+                icon: Icons.photo_library_outlined,
+                iconColor: AppColors.cyanAccent,
+                title: 'Pick Image',
+                subtitle: 'Choose a photo from your gallery',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickImage();
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildAddOption(
+                icon: Icons.add_photo_alternate_outlined,
+                iconColor: AppColors.pinkAccent,
+                title: 'Create Image',
+                subtitle: 'Pick & edit with stickers / text',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _createImageWithEditing();
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildAddOption(
+                icon: Icons.text_fields,
+                iconColor: AppColors.amberAccent,
+                title: 'Create Text',
+                subtitle: 'Compose styled text for the frame',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _createTextImage();
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildAddOption(
+                icon: Icons.bolt,
+                iconColor: AppColors.purpleAccent,
+                title: 'Flash Banner',
+                subtitle: 'Animated scrolling banner',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openFlashBanner();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildAddOption({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: NeumorphicCard(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: const BoxDecoration(
+                color: AppColors.surface,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: iconColor, size: 24),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  Text(subtitle, style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _pickImage() async {
@@ -713,172 +831,286 @@ class _FramePageState extends State<FramePage> {
     final connected = _connState == FrameConnState.connected;
     final active = _activeIndex != null ? _sentImages[_activeIndex!] : null;
     final anySelected = _sentImages.any((i) => i.selectedForRotation);
-    // A non-sequence item is "unsent" when it has no deviceIndex but has bytes
-    // available (either in RAM or persisted to disk via sequenceFrameFiles/fullBytesFile).
-    // We use a simpler proxy: if deviceIndex is null and it is not sequence-only-on-device.
     final hasSelectedUnsent = _sentImages.any((i) {
       if (!i.selectedForRotation) return false;
       if (i.isSequence) return i.sequenceDeviceIndices?.any((idx) => idx == null) ?? true;
-      // For single images, assume bytes are available if no device index yet.
       return i.deviceIndex == null;
     });
 
     return Scaffold(
+      backgroundColor: AppColors.black,
       appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: const Text('AMOLED Frame'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        centerTitle: false,
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: AppColors.cyanGradient,
+              ),
+              child: const Icon(Icons.display_settings, size: 18, color: Colors.black),
+            ),
+            const SizedBox(width: 10),
+            const Text(
+              'AMOLED Frame',
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+                color: Colors.white,
+                fontSize: 20,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: _statusColor,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: _statusColor.withValues(alpha: 0.6),
+                        blurRadius: 6,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  _connState == FrameConnState.connected ? 'Connected' : 'Offline',
+                  style: TextStyle(
+                    color: _statusColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (_connState == FrameConnState.disconnected) ...[
+                  const SizedBox(width: 8),
+                  NeumorphicIconButton(
+                    icon: const Icon(Icons.refresh, size: 16, color: AppColors.cyanAccent),
+                    onPressed: _connectToFrame,
+                    borderRadius: 20,
+                    padding: const EdgeInsets.all(6),
+                    tooltip: 'Reconnect',
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                children: [
-                  Icon(Icons.circle, size: 12, color: _statusColor),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(_statusText, style: Theme.of(context).textTheme.titleMedium)),
-                  if (_connState == FrameConnState.disconnected)
-                    TextButton(onPressed: _connectToFrame, child: const Text('Reconnect')),
-                ],
-              ),
-              const SizedBox(height: 16),
-              AspectRatio(
-                aspectRatio: panelHeight / panelWidth,
-                child: Container(
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  // Use thumbnail for the preview panel — full bytes may be on disk.
-                  child: (active?.thumbnailBytes == null)
-                      ? const Center(child: Text('No image selected', style: TextStyle(color: Colors.grey)))
-                      : ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: RotatedBox(
-                      quarterTurns: active!.needsDisplayRotation ? 3 : 0,
-                      child: Image.memory(active.thumbnailBytes!, fit: BoxFit.contain),
+              // ── Recessed Frame Canvas Area ─────────────────────────────────
+              NeumorphicCard(
+                isInset: true,
+                borderRadius: 20,
+                padding: const EdgeInsets.all(6),
+                child: AspectRatio(
+                  aspectRatio: panelHeight / panelWidth,
+                  child: Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.08), width: 1),
                     ),
+                    child: (active?.thumbnailBytes == null)
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.image_outlined, size: 36, color: Colors.white.withValues(alpha: 0.2)),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'No frame image active',
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.35),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : ClipRRect(
+                            borderRadius: BorderRadius.circular(14),
+                            child: RotatedBox(
+                              quarterTurns: active!.needsDisplayRotation ? 3 : 0,
+                              child: Image.memory(active.thumbnailBytes!, fit: BoxFit.contain),
+                            ),
+                          ),
                   ),
                 ),
               ),
+
+              const SizedBox(height: 16),
+
+              // ── Unified Add Content Button ─────────────────────────────────
+              NeumorphicButton(
+                onPressed: _showAddContentSheet,
+                icon: const Icon(Icons.add_circle_outline, color: Colors.white, size: 20),
+                label: 'Add Content',
+                gradient: AppColors.primaryGradient,
+                textColor: Colors.white,
+              ),
+
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _pickImage,
-                      icon: const Icon(Icons.photo_library_outlined),
-                      label: const Text('Pick Image'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _createImageWithEditing,
-                      icon: const Icon(Icons.add_photo_alternate_outlined),
-                      label: const Text('Create Image'),
-                    ),
-                  ),
-                ],
+
+              // ── Show on Device Button ──────────────────────────────────────
+              NeumorphicButton(
+                onPressed: (connected && _activeIndex != null && !_busy) ? () => _showImageEntry(_activeIndex!) : null,
+                icon: const Icon(Icons.visibility, color: Colors.white, size: 20),
+                label: 'Display Selected on Frame',
+                gradient: (connected && _activeIndex != null && !_busy) ? AppColors.cyanGradient : null,
+                textColor: Colors.white,
               ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _createTextImage,
-                      icon: const Icon(Icons.text_fields),
-                      label: const Text('Create Text'),
+
+              if (_busy)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: const LinearProgressIndicator(
+                      color: AppColors.cyanAccent,
+                      backgroundColor: AppColors.surfaceElevated,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _openFlashBanner,
-                      icon: const Icon(Icons.bolt),
-                      label: const Text('Flash Banner'),
+                ),
+
+              const SizedBox(height: 16),
+
+              // ── Brightness Card ────────────────────────────────────────────
+              NeumorphicCard(
+                borderRadius: 18,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    const Icon(Icons.brightness_6, color: AppColors.amberAccent, size: 22),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Slider(
+                        value: _brightness,
+                        min: 0,
+                        max: 255,
+                        divisions: 51,
+                        activeColor: AppColors.cyanAccent,
+                        inactiveColor: AppColors.surfaceElevatedLighter,
+                        onChanged: connected ? (v) => setState(() => _brightness = v) : null,
+                        onChangeEnd: connected ? (v) => _sendBrightness(v.round()) : null,
+                      ),
                     ),
-                  ),
-                ],
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceInset,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${(_brightness / 255 * 100).round()}%',
+                        style: const TextStyle(
+                          color: AppColors.cyanAccent,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: (connected && _activeIndex != null && !_busy) ? () => _showImageEntry(_activeIndex!) : null,
-                      icon: const Icon(Icons.visibility),
-                      label: const Text('Show'),
-                    ),
-                  ),
-                ],
-              ),
-              if (_busy) const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Icon(Icons.brightness_6),
-                  Expanded(
-                    child: Slider(
-                      value: _brightness,
-                      min: 0,
-                      max: 255,
-                      divisions: 51,
-                      onChanged: connected ? (v) => setState(() => _brightness = v) : null,
-                      onChangeEnd: connected ? (v) => _sendBrightness(v.round()) : null,
-                    ),
-                  ),
-                  SizedBox(width: 40, child: Text('${(_brightness / 255 * 100).round()}%')),
-                ],
-              ),
-              const SizedBox(height: 12),
+
+              const SizedBox(height: 16),
+
+              // ── Playlist & Stored Images Card ──────────────────────────────
               IgnorePointer(
                 ignoring: _rotationActive || _busy,
                 child: Opacity(
-                  opacity: (_rotationActive || _busy) ? 0.4 : 1.0,
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade400),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
+                  opacity: (_rotationActive || _busy) ? 0.45 : 1.0,
+                  child: NeumorphicCard(
+                    borderRadius: 20,
+                    padding: const EdgeInsets.all(14),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text('Images', style: Theme.of(context).textTheme.labelLarge),
-                            TextButton.icon(
-                              onPressed: !connected ? null : anySelected ? _deleteSelectedImages : _formatDevice,
-                              icon: const Icon(Icons.delete_forever_outlined, color: Colors.red),
-                              label: Text(anySelected ? 'Delete Selected' : 'Format Device', style: const TextStyle(color: Colors.red)),
+                            const Row(
+                              children: [
+                                Icon(Icons.collections_outlined, size: 18, color: AppColors.cyanAccent),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Frame Playlist',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                                ),
+                              ],
                             ),
-                            IconButton(
-                              icon: Icon(_allSelected ? Icons.deselect : Icons.select_all),
-                              onPressed: _sentImages.isEmpty ? null : _toggleSelectAll,
+                            Row(
+                              children: [
+                                TextButton.icon(
+                                  onPressed: !connected ? null : anySelected ? _deleteSelectedImages : _formatDevice,
+                                  icon: const Icon(Icons.delete_outline, color: AppColors.pinkAccent, size: 16),
+                                  label: Text(
+                                    anySelected ? 'Delete' : 'Format',
+                                    style: const TextStyle(color: AppColors.pinkAccent, fontSize: 13, fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                                NeumorphicIconButton(
+                                  icon: Icon(_allSelected ? Icons.deselect : Icons.select_all, size: 16, color: Colors.white70),
+                                  onPressed: _sentImages.isEmpty ? null : _toggleSelectAll,
+                                  borderRadius: 12,
+                                  padding: const EdgeInsets.all(6),
+                                  tooltip: _allSelected ? 'Deselect All' : 'Select All',
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                        const SizedBox(height: 4),
+
+                        const SizedBox(height: 8),
+
                         if (_sentImages.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 8),
-                            child: Text('Pick or create an image to get started.', style: TextStyle(color: Colors.grey)),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 20),
+                            child: Center(
+                              child: Column(
+                                children: [
+                                  Icon(Icons.image_search, color: Colors.white24, size: 36),
+                                  const SizedBox(height: 8),
+                                  const Text(
+                                    'No images loaded yet.\nPick or create an image above to start.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(color: Colors.white38, fontSize: 13),
+                                  ),
+                                ],
+                              ),
+                            ),
                           )
                         else
                           ListView.separated(
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),
                             itemCount: _sentImages.length,
-                            separatorBuilder: (_, _) => const SizedBox(height: 4),
+                            separatorBuilder: (_, _) => const SizedBox(height: 8),
                             itemBuilder: (context, i) {
                               final image = _sentImages[i];
                               final isActive = _activeIndex == i;
 
-                              // ── Thumbnail widget ──────────────────────────
                               Widget thumbWidget;
                               if (image.isSequence &&
                                   image.sequenceThumbnails != null &&
@@ -888,51 +1120,74 @@ class _FramePageState extends State<FramePage> {
                                   needsDisplayRotation: image.needsDisplayRotation,
                                 );
                               } else {
-                                // fullBytes is private; use thumbnailBytes for the list row preview.
                                 final thumb = image.thumbnailBytes;
                                 thumbWidget = thumb == null
-                                    ? Container(color: Colors.grey.shade300)
+                                    ? Container(color: AppColors.surfaceElevated)
                                     : RotatedBox(
                                         quarterTurns: image.needsDisplayRotation ? 3 : 0,
                                         child: Image.memory(thumb, fit: BoxFit.cover),
                                       );
                               }
 
-                              // ── Label suffix ──────────────────────────────
-                              // sequenceFrames may be null after bytes are persisted to disk;
-                              // fall back to sequenceFrameFiles count.
                               final frameCount = image.sequenceFrames?.length ?? image.sequenceFrameFiles?.length ?? 0;
-                              final labelSuffix = image.isSequence
-                                  ? ' ($frameCount frames)'
-                                  : '';
+                              final labelSuffix = image.isSequence ? ' ($frameCount frames)' : '';
 
-                              return InkWell(
+                              return GestureDetector(
                                 onTap: () => setState(() => _activeIndex = i),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(4),
-                                    border: isActive ? Border.all(color: Theme.of(context).colorScheme.primary) : null,
-                                  ),
+                                child: NeumorphicCard(
+                                  borderRadius: 14,
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  color: isActive ? AppColors.surfaceElevatedLighter : AppColors.surface,
+                                  border: isActive ? Border.all(color: AppColors.cyanAccent, width: 1.5) : null,
                                   child: Row(
                                     children: [
                                       ClipRRect(
-                                        borderRadius: BorderRadius.circular(4),
+                                        borderRadius: BorderRadius.circular(8),
                                         child: SizedBox(
                                           width: 60,
-                                          height: 30,
+                                          height: 32,
                                           child: thumbWidget,
                                         ),
                                       ),
-                                      const SizedBox(width: 8),
-                                      Expanded(child: Text('${image.label}$labelSuffix')),
-                                      IconButton(
-                                        icon: const Icon(Icons.visibility_outlined),
-                                        onPressed: connected ? () => _showImageEntry(i) : null,
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          '${image.label}$labelSuffix',
+                                          style: TextStyle(
+                                            color: isActive ? AppColors.cyanAccent : Colors.white,
+                                            fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
+                                            fontSize: 13,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       ),
-                                      IconButton(
-                                        icon: Icon(image.selectedForRotation ? Icons.check_box : Icons.check_box_outline_blank),
-                                        onPressed: () => _toggleRotationSelected(image),
+                                      NeumorphicIconButton(
+                                        icon: const Icon(Icons.visibility_outlined, size: 16, color: Colors.white70),
+                                        onPressed: connected ? () => _showImageEntry(i) : null,
+                                        borderRadius: 10,
+                                        padding: const EdgeInsets.all(6),
+                                        tooltip: 'Show',
+                                      ),
+                                      const SizedBox(width: 6),
+                                      GestureDetector(
+                                        onTap: () => _toggleRotationSelected(image),
+                                        child: Container(
+                                          padding: const EdgeInsets.all(6),
+                                          decoration: BoxDecoration(
+                                            color: image.selectedForRotation ? AppColors.cyanAccent.withValues(alpha: 0.2) : AppColors.surfaceInset,
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color: image.selectedForRotation ? AppColors.cyanAccent : Colors.white24,
+                                              width: 1.5,
+                                            ),
+                                          ),
+                                          child: Icon(
+                                            image.selectedForRotation ? Icons.check : Icons.circle_outlined,
+                                            size: 14,
+                                            color: image.selectedForRotation ? AppColors.cyanAccent : Colors.white38,
+                                          ),
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -940,29 +1195,46 @@ class _FramePageState extends State<FramePage> {
                               );
                             },
                           ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            onPressed: (connected && hasSelectedUnsent && !_busy) ? _sendSelectedToDevice : null,
-                            icon: const Icon(Icons.cloud_upload_outlined),
-                            label: const Text('Send Selected to Device'),
-                          ),
-                        ),
+
                         const SizedBox(height: 12),
+
+                        if (hasSelectedUnsent)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: NeumorphicButton(
+                              onPressed: (connected && !_busy) ? _sendSelectedToDevice : null,
+                              icon: const Icon(Icons.cloud_upload_outlined, color: AppColors.cyanAccent, size: 18),
+                              label: 'Send Selected to Device',
+                            ),
+                          ),
+
+                        // Rotation duration slider
                         Row(
                           children: [
-                            const Icon(Icons.timer_outlined),
+                            const Icon(Icons.timer_outlined, color: AppColors.cyanAccent, size: 20),
+                            const SizedBox(width: 8),
                             Expanded(
                               child: Slider(
                                 value: _rotationSeconds,
                                 min: 2,
                                 max: 30,
                                 divisions: 28,
+                                activeColor: AppColors.cyanAccent,
+                                inactiveColor: AppColors.surfaceElevatedLighter,
                                 onChanged: (v) => setState(() => _rotationSeconds = v),
                               ),
                             ),
-                            SizedBox(width: 40, child: Text('${_rotationSeconds.round()}s')),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: AppColors.surfaceInset,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                '${_rotationSeconds.round()}s',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.white),
+                              ),
+                            ),
                           ],
                         ),
                       ],
@@ -970,12 +1242,22 @@ class _FramePageState extends State<FramePage> {
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
-              ElevatedButton.icon(
+
+              const SizedBox(height: 16),
+
+              // ── Start / Stop Rotation Button ───────────────────────────────
+              NeumorphicButton(
                 onPressed: (!connected || _busy) ? null : _rotationActive ? _stopRotation : (anySelected ? _startRotation : null),
-                icon: Icon(_rotationActive ? Icons.stop : Icons.play_arrow),
-                label: Text(_rotationActive ? 'Stop Rotation' : 'Start Rotation'),
+                gradient: _rotationActive
+                    ? const LinearGradient(colors: [Colors.redAccent, Colors.deepOrangeAccent])
+                    : AppColors.primaryGradient,
+                icon: Icon(_rotationActive ? Icons.stop_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 22),
+                label: _rotationActive ? 'Stop Playlist Rotation' : 'Start Playlist Rotation',
+                textColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
               ),
+
+              const SizedBox(height: 24),
             ],
           ),
         ),
