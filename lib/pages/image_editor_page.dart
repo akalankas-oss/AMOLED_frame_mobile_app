@@ -494,6 +494,58 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                 onEmojiPicked: _addEmojiItem,
                                 onStickerPicked: _addStickerItem,
                               ),
+                              const SizedBox(height: 16),
+                              Row(
+                                children: [
+                                  const Text('Background:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: SizedBox(
+                                      height: 30,
+                                      child: ListView.builder(
+                                        scrollDirection: Axis.horizontal,
+                                        itemCount: ColorSwatchPicker.colorPalette.length,
+                                        itemBuilder: (ctx, idx) {
+                                          final c = ColorSwatchPicker.colorPalette[idx];
+                                          final isSelected = c == _bgColor;
+                                          return GestureDetector(
+                                            onTap: () => _setBackgroundColor(c),
+                                            child: Container(
+                                              width: 26,
+                                              height: 26,
+                                              margin: const EdgeInsets.symmetric(horizontal: 3),
+                                              decoration: BoxDecoration(
+                                                color: c,
+                                                shape: BoxShape.circle,
+                                                border: Border.all(
+                                                  color: isSelected ? Colors.cyanAccent : Colors.white24,
+                                                  width: isSelected ? 2 : 1,
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  GestureDetector(
+                                    onTap: () => ColorSwatchPicker.showCustomColorPicker(context, _bgColor, _setBackgroundColor),
+                                    child: Container(
+                                      width: 30,
+                                      height: 30,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: Colors.white24, width: 1.5),
+                                        gradient: const SweepGradient(
+                                          colors: [Colors.red, Colors.yellow, Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.red],
+                                        ),
+                                      ),
+                                      child: const Icon(Icons.add, size: 16, color: Colors.white),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ],
                           ),
                         ),
@@ -563,57 +615,6 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                         ],
                       ),
                       const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        const Text('Color:', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: SizedBox(
-                            height: 30,
-                            child: ListView.builder(
-                              scrollDirection: Axis.horizontal,
-                              itemCount: ColorSwatchPicker.colorPalette.length,
-                              itemBuilder: (ctx, idx) {
-                                final c = ColorSwatchPicker.colorPalette[idx];
-                                final isSelected = c == _bgColor;
-                                return GestureDetector(
-                                  onTap: () => _setBackgroundColor(c),
-                                  child: Container(
-                                    width: 26,
-                                    height: 26,
-                                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                                    decoration: BoxDecoration(
-                                      color: c,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: isSelected ? Colors.cyanAccent : Colors.white24,
-                                        width: isSelected ? 2 : 1,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        GestureDetector(
-                          onTap: () => ColorSwatchPicker.showCustomColorPicker(context, _bgColor, _setBackgroundColor),
-                          child: Container(
-                            width: 30,
-                            height: 30,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white24, width: 1.5),
-                              gradient: const SweepGradient(
-                                colors: [Colors.red, Colors.yellow, Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.red],
-                              ),
-                            ),
-                            child: const Icon(Icons.add, size: 16, color: Colors.white),
-                          ),
-                        ),
-                      ],
-                    ),
                   ],
                 ),
               ),

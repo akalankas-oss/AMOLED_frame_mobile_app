@@ -13,6 +13,7 @@ import 'flash_banner_page.dart';
 import 'image_editor_page.dart';
 import 'text_composer_page.dart';
 import '../widgets/neumorphic_components.dart';
+import '../widgets/color_swatch_picker.dart';
 
 // ── Animated sequence thumbnail ───────────────────────────────────────────
 /// Cycles through the thumbnails of a multi-frame sequence at ~8 fps.
@@ -284,6 +285,17 @@ class _FramePageState extends State<FramePage> {
                   _openFlashBanner();
                 },
               ),
+              const SizedBox(height: 12),
+              _buildAddOption(
+                icon: Icons.format_color_fill,
+                iconColor: AppColors.greenAccent,
+                title: 'Solid Color',
+                subtitle: 'Send a solid color to the frame',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _createSolidColorImage();
+                },
+              ),
             ],
           ),
         );
@@ -393,6 +405,25 @@ class _FramePageState extends State<FramePage> {
       _addLog('Image processing failed: $e');
     }
   }
+
+  void _createSolidColorImage() {
+    ColorSwatchPicker.showCustomColorPicker(context, Colors.black, (c) async {
+      final imgBytes = await renderSolidColorToPanelImage(color: c);
+      final thumb = makeThumbnail(imgBytes);
+      final entry = SentImage(
+        thumbnailBytes: thumb,
+        label: 'Solid Color ${_sentImages.length + 1}',
+        needsDisplayRotation: true,
+      );
+      await entry.persistFullBytes(imgBytes);
+      if (!mounted) return;
+      setState(() {
+        _sentImages.add(entry);
+        _activeIndex = _sentImages.length - 1;
+      });
+    });
+  }
+
 
   Future<void> _openFlashBanner() async {
     final frames = await Navigator.of(context).push<List<Uint8List>>(

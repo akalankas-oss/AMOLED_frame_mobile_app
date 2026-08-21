@@ -57,6 +57,28 @@ Uint8List fitImageToPanel(Uint8List sourceBytes) {
   return Uint8List.fromList(img.encodeJpg(rotated, quality: 90));
 }
 
+// Renders a solid color on the landscape working canvas,
+// then rotates 90 deg clockwise into the panel's native buffer.
+Future<Uint8List> renderSolidColorToPanelImage({
+  required Color color,
+}) async {
+  final logicalWidth = panelHeight.toDouble(); // 960 -- landscape working canvas
+  final logicalHeight = panelWidth.toDouble(); // 192
+
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, logicalWidth, logicalHeight));
+  canvas.drawRect(Rect.fromLTWH(0, 0, logicalWidth, logicalHeight), Paint()..color = color);
+
+  final picture = recorder.endRecording();
+  final logicalImage = await picture.toImage(logicalWidth.round(), logicalHeight.round());
+  final byteData = await logicalImage.toByteData(format: ui.ImageByteFormat.png);
+  final pngBytes = byteData!.buffer.asUint8List();
+
+  final decoded = img.decodeImage(pngBytes)!;
+  final rotated = img.copyRotate(decoded, angle: 90);
+  return Uint8List.fromList(img.encodeJpg(rotated, quality: 90));
+}
+
 // Renders text on the landscape working canvas
 // (panelHeight x panelWidth, i.e. 960x192), then rotates 90 deg clockwise
 // into the panel's native panelWidth x panelHeight buffer for delivery.
