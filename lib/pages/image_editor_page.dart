@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:image/image.dart' as image_lib;
+import 'package:image_picker/image_picker.dart';
 
 import '../models/editor_item.dart';
 import '../widgets/color_swatch_picker.dart';
@@ -12,15 +13,20 @@ import '../widgets/editor_style_panel.dart';
 import '../widgets/emoji_sticker_picker.dart';
 import '../widgets/neumorphic_components.dart';
 
+/// Unified "Create Image" design studio.
+///
+/// [initialImageBytes] is optional. When null the editor starts with a pure
+/// solid-colour canvas. The user can add a photo later via the background panel.
 class ImageEditorPage extends StatefulWidget {
-  final Uint8List imageBytes;
-  const ImageEditorPage({super.key, required this.imageBytes});
+  final Uint8List? initialImageBytes;
+  const ImageEditorPage({super.key, this.initialImageBytes});
 
   @override
   State<ImageEditorPage> createState() => _ImageEditorPageState();
 }
 
-class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProviderStateMixin {
+class _ImageEditorPageState extends State<ImageEditorPage>
+    with SingleTickerProviderStateMixin {
   static const double _canvasWidth = 960;
   static const double _canvasHeight = 192;
   Size? _canvasSize;
@@ -42,7 +48,57 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
   double _bgRotation = 0.0;
   double? _bgGestureStartScale;
   double? _bgGestureStartRotation;
+
+  // Solid-colour background (always present; shown when no photo is loaded).
   Color _bgColor = Colors.black;
+
+  // Optional photo layer on top of the solid colour.
+  Uint8List? _bgImageBytes;
+
+  // ── Background photo management ─────────────────────────────────────────
+
+  Future<void> _pickBackgroundPhoto() async {
+    final file = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (file == null) return;
+    final rawBytes = await file.readAsBytes();
+    final bytes = await _downscaleForEditing(rawBytes);
+    if (!mounted) return;
+    setState(() {
+      _bgImageBytes = bytes;
+      _bgOffset = Offset.zero;
+      _bgScale = 1.0;
+      _bgRotation = 0.0;
+    });
+  }
+
+  void _removeBackgroundPhoto() {
+    setState(() {
+      _bgImageBytes = null;
+      _bgOffset = Offset.zero;
+      _bgScale = 1.0;
+      _bgRotation = 0.0;
+    });
+  }
+
+  Future<Uint8List> _downscaleForEditing(Uint8List bytes,
+      {int maxDimension = 1000}) async {
+    final rawDecoded = image_lib.decodeImage(bytes);
+    if (rawDecoded == null) return bytes;
+    final oriented = image_lib.bakeOrientation(rawDecoded);
+    if (oriented.width <= maxDimension && oriented.height <= maxDimension) {
+      return Uint8List.fromList(image_lib.encodeJpg(oriented, quality: 92));
+    }
+    final scale = maxDimension /
+        (oriented.width > oriented.height ? oriented.width : oriented.height);
+    final resized = image_lib.copyResize(
+      oriented,
+      width: (oriented.width * scale).round(),
+      height: (oriented.height * scale).round(),
+    );
+    return Uint8List.fromList(image_lib.encodeJpg(resized, quality: 92));
+  }
+
+  // ── Background reposition controls ──────────────────────────────────────
 
   void _toggleReposition() {
     setState(() {
@@ -60,31 +116,28 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
   }
 
   void _quickRotateBackground(double radians) {
-    setState(() {
-      _bgRotation += radians;
-    });
+    setState(() => _bgRotation += radians);
   }
 
   void _stepZoomBackground(double delta) {
-    setState(() {
-      _bgScale = (_bgScale + delta).clamp(0.5, 6.0);
-    });
+    setState(() => _bgScale = (_bgScale + delta).clamp(0.5, 6.0));
   }
 
   void _setBackgroundColor(Color color) {
     setState(() => _bgColor = color);
   }
 
+  // ── Lifecycle ────────────────────────────────────────────────────────────
+
   @override
   void initState() {
     super.initState();
-    _autoRotateIfPortrait();
+    if (widget.initialImageBytes != null) {
+      _bgImageBytes = widget.initialImageBytes;
+    }
   }
 
-  Future<void> _autoRotateIfPortrait() async {
-    // Intentionally left empty. User requested portrait images
-    // maintain their original orientation.
-  }
+  // ── Item management ──────────────────────────────────────────────────────
 
   void _addEmojiItem(String standardText) {
     final uniqueId = DateTime.now().microsecondsSinceEpoch.toString();
@@ -137,30 +190,45 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Add Text'),
+        backgroundColor: AppColors.surfaceElevated,
+        title: const Text('Add Text',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(hintText: 'Type your text...'),
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'Type your text...',
+            hintStyle: TextStyle(color: Colors.white38),
+            enabledBorder: UnderlineInputBorder(
+                borderSide: BorderSide(color: Colors.white30)),
+            focusedBorder: UnderlineInputBorder(
+                borderSide: BorderSide(color: AppColors.cyanAccent)),
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
           ),
           ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.cyanAccent),
             onPressed: () {
               if (controller.text.trim().isNotEmpty) {
                 _addEmojiItem(controller.text.trim());
               }
               Navigator.pop(context);
             },
-            child: const Text('Add'),
-          )
+            child: const Text('Add',
+                style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+          ),
         ],
       ),
     );
   }
+
+  // ── Export ───────────────────────────────────────────────────────────────
 
   Future<void> _exportCanvas() async {
     try {
@@ -173,12 +241,14 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
       await Future.delayed(const Duration(milliseconds: 300));
 
       final RenderRepaintBoundary boundary =
-          _boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+          _boundaryKey.currentContext!.findRenderObject()
+              as RenderRepaintBoundary;
 
       final double renderedLogicalWidth = boundary.size.width;
       final double neededPixelRatio = _canvasWidth / renderedLogicalWidth;
 
-      final ui.Image captured = await boundary.toImage(pixelRatio: neededPixelRatio);
+      final ui.Image captured =
+          await boundary.toImage(pixelRatio: neededPixelRatio);
 
       final ByteData? rawData =
           await captured.toByteData(format: ui.ImageByteFormat.rawRgba);
@@ -195,14 +265,15 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
 
         final int nativeW = _canvasHeight.round();
         final int nativeH = _canvasWidth.round();
-        final image_lib.Image finalImg = (rotated.width == nativeW && rotated.height == nativeH)
-            ? rotated
-            : image_lib.copyResize(
-                rotated,
-                width: nativeW,
-                height: nativeH,
-                interpolation: image_lib.Interpolation.linear,
-              );
+        final image_lib.Image finalImg =
+            (rotated.width == nativeW && rotated.height == nativeH)
+                ? rotated
+                : image_lib.copyResize(
+                    rotated,
+                    width: nativeW,
+                    height: nativeH,
+                    interpolation: image_lib.Interpolation.linear,
+                  );
 
         final Uint8List jpegBytes =
             Uint8List.fromList(image_lib.encodeJpg(finalImg, quality: 90));
@@ -211,7 +282,7 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
     } catch (e) {
       debugPrint('Export failed: $e');
       if (mounted) {
-        setState(() { _isSaving = false; });
+        setState(() => _isSaving = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Export failed: $e'),
@@ -223,20 +294,27 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
     }
   }
 
+  // ── Build ────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
-    EditorItem? activeItem = (_selectedIdx != null && _selectedIdx! < _placedItems.length)
-        ? _placedItems[_selectedIdx!]
-        : null;
+    final EditorItem? activeItem =
+        (_selectedIdx != null && _selectedIdx! < _placedItems.length)
+            ? _placedItems[_selectedIdx!]
+            : null;
 
-    final bgGesturesEnabled = _repositioningBackground && !_isSaving;
+    final bool bgGesturesEnabled = _repositioningBackground && !_isSaving;
+    final bool hasPhoto = _bgImageBytes != null;
 
     return Scaffold(
-      backgroundColor: Colors.black, // Pure AMOLED black
+      backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text('Design Canvas', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        title: const Text(
+          'Create Image',
+          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+        ),
         iconTheme: const IconThemeData(color: Colors.white),
         leading: Padding(
           padding: const EdgeInsets.all(8.0),
@@ -249,35 +327,51 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
         ),
         actions: [
           if (!_isSaving) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-              child: NeumorphicIconButton(
-                icon: Icon(_repositioningBackground ? Icons.check_circle : Icons.crop_rotate, 
-                           color: _repositioningBackground ? Colors.greenAccent : Colors.cyanAccent, size: 20),
-                isActive: _repositioningBackground,
-                onPressed: _toggleReposition,
-                borderRadius: 24,
-                padding: const EdgeInsets.all(8.0),
+            // Reposition toggle (only visible when a photo is loaded)
+            if (hasPhoto)
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+                child: NeumorphicIconButton(
+                  icon: Icon(
+                    _repositioningBackground
+                        ? Icons.check_circle
+                        : Icons.crop_rotate,
+                    color: _repositioningBackground
+                        ? Colors.greenAccent
+                        : Colors.cyanAccent,
+                    size: 20,
+                  ),
+                  isActive: _repositioningBackground,
+                  onPressed: _toggleReposition,
+                  borderRadius: 24,
+                  padding: const EdgeInsets.all(8.0),
+                ),
               ),
-            ),
+            // Add Text
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
               child: NeumorphicIconButton(
-                icon: const Icon(Icons.text_fields, color: Colors.amberAccent, size: 20),
+                icon: const Icon(Icons.text_fields,
+                    color: Colors.amberAccent, size: 20),
                 onPressed: _openCustomTextInput,
                 borderRadius: 24,
                 padding: const EdgeInsets.all(8.0),
               ),
             ),
+            // Save
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
               child: NeumorphicButton(
                 borderRadius: 24,
                 gradient: AppColors.primaryGradient,
                 icon: const Icon(Icons.check, size: 18, color: Colors.white),
                 label: 'Save',
                 textColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 onPressed: _exportCanvas,
               ),
             ),
@@ -286,19 +380,17 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
       ),
       body: Stack(
         children: [
-          // Main Column for Canvas and Bottom Tools
           Column(
             children: [
-              // Canvas Area
+              // ── Canvas Area ──────────────────────────────────────────────
               Expanded(
                 flex: 4,
                 child: Center(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: Colors.black, // true black
+                      color: Colors.black,
                       border: Border.all(color: Colors.white10, width: 1),
                       borderRadius: BorderRadius.circular(16),
-                      // Soft inner shadow can't be easily done natively, removing glowing shadow as requested
                     ),
                     child: AspectRatio(
                       aspectRatio: _canvasWidth / _canvasHeight,
@@ -311,46 +403,86 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                               key: _stackKey,
                               clipBehavior: Clip.hardEdge,
                               children: [
+                                // Solid colour fill (always present)
                                 Positioned.fill(
-                                  child: ClipRect(
-                                    child: Container(
-                                      color: _bgColor,
+                                  child: Container(color: _bgColor),
+                                ),
+
+                                // Optional photo layer
+                                if (hasPhoto)
+                                  Positioned.fill(
+                                    child: ClipRect(
                                       child: GestureDetector(
                                         behavior: HitTestBehavior.opaque,
-                                        onScaleStart: !bgGesturesEnabled ? null : (details) {
-                                          _bgGestureStartScale = _bgScale;
-                                          _bgGestureStartRotation = _bgRotation;
-                                        },
-                                        onScaleUpdate: !bgGesturesEnabled ? null : (details) {
-                                          setState(() {
-                                            _bgScale = (_bgGestureStartScale! * details.scale).clamp(0.5, 6.0);
-                                            _bgOffset += details.focalPointDelta;
-                                            if (details.pointerCount > 1) {
-                                              _bgRotation = _bgGestureStartRotation! + details.rotation;
-                                            }
-                                          });
-                                        },
-                                        onTap: bgGesturesEnabled ? null : () {
-                                          if (!_isSaving) setState(() => _selectedIdx = null);
-                                        },
+                                        onScaleStart: !bgGesturesEnabled
+                                            ? null
+                                            : (details) {
+                                                _bgGestureStartScale = _bgScale;
+                                                _bgGestureStartRotation =
+                                                    _bgRotation;
+                                              },
+                                        onScaleUpdate: !bgGesturesEnabled
+                                            ? null
+                                            : (details) {
+                                                setState(() {
+                                                  _bgScale =
+                                                      (_bgGestureStartScale! *
+                                                              details.scale)
+                                                          .clamp(0.5, 6.0);
+                                                  _bgOffset +=
+                                                      details.focalPointDelta;
+                                                  if (details.pointerCount >
+                                                      1) {
+                                                    _bgRotation =
+                                                        _bgGestureStartRotation! +
+                                                            details.rotation;
+                                                  }
+                                                });
+                                              },
+                                        onTap: bgGesturesEnabled
+                                            ? null
+                                            : () {
+                                                if (!_isSaving) {
+                                                  setState(
+                                                      () => _selectedIdx = null);
+                                                }
+                                              },
                                         child: Transform.translate(
                                           offset: _bgOffset,
                                           child: Transform.rotate(
                                             angle: _bgRotation,
                                             child: Transform.scale(
                                               scale: _bgScale,
-                                              child: Image.memory(widget.imageBytes, fit: BoxFit.contain),
+                                              child: Image.memory(
+                                                _bgImageBytes!,
+                                                fit: BoxFit.contain,
+                                              ),
                                             ),
                                           ),
                                         ),
                                       ),
                                     ),
                                   ),
-                                ),
+
+                                // Tap-to-deselect on solid-colour canvas
+                                if (!hasPhoto)
+                                  Positioned.fill(
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: () {
+                                        if (!_isSaving) {
+                                          setState(() => _selectedIdx = null);
+                                        }
+                                      },
+                                    ),
+                                  ),
+
+                                // Placed items (text, stickers, emojis)
                                 ...List.generate(_placedItems.length, (index) {
                                   final item = _placedItems[index];
                                   final isFocused = _selectedIdx == index;
-                                  final itemGesturesEnabled = !_isSaving && !_repositioningBackground;
+                                  final itemGesturesEnabled =
+                                      !_isSaving && !_repositioningBackground;
 
                                   return Positioned(
                                     key: ValueKey('item_${item.id}'),
@@ -358,35 +490,63 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                     top: item.offset.dy,
                                     child: GestureDetector(
                                       behavior: HitTestBehavior.opaque,
-                                      onTap: !itemGesturesEnabled ? null : () {
-                                        setState(() { _selectedIdx = index; });
-                                      },
-                                      onScaleStart: !itemGesturesEnabled ? null : (details) {
-                                        final box = _stackKey.currentContext!.findRenderObject() as RenderBox;
-                                        final localPos = box.globalToLocal(details.focalPoint);
-                                        setState(() {
-                                          _selectedIdx = index;
-                                          _dragAnchor = localPos - item.offset;
-                                          _itemStartScale = item.scale;
-                                          _itemStartRotation = item.rotation;
-                                        });
-                                      },
-                                      onScaleUpdate: !itemGesturesEnabled ? null : (details) {
-                                        final box = _stackKey.currentContext!.findRenderObject() as RenderBox;
-                                        final localPos = box.globalToLocal(details.focalPoint);
-                                        final anchor = _dragAnchor ?? Offset.zero;
-                                        setState(() {
-                                          final newOffset = localPos - anchor;
-                                          item.offset = Offset(
-                                            newOffset.dx.clamp(-40.0, constraints.maxWidth - 20),
-                                            newOffset.dy.clamp(-40.0, constraints.maxHeight - 20),
-                                          );
-                                          if (details.pointerCount > 1) {
-                                            item.scale = (_itemStartScale! * details.scale).clamp(0.3, 4.0);
-                                            item.rotation = _itemStartRotation! + details.rotation;
-                                          }
-                                        });
-                                      },
+                                      onTap: !itemGesturesEnabled
+                                          ? null
+                                          : () {
+                                              setState(
+                                                  () => _selectedIdx = index);
+                                            },
+                                      onScaleStart: !itemGesturesEnabled
+                                          ? null
+                                          : (details) {
+                                              final box = _stackKey
+                                                      .currentContext!
+                                                      .findRenderObject()
+                                                  as RenderBox;
+                                              final localPos = box
+                                                  .globalToLocal(
+                                                      details.focalPoint);
+                                              setState(() {
+                                                _selectedIdx = index;
+                                                _dragAnchor =
+                                                    localPos - item.offset;
+                                                _itemStartScale = item.scale;
+                                                _itemStartRotation =
+                                                    item.rotation;
+                                              });
+                                            },
+                                      onScaleUpdate: !itemGesturesEnabled
+                                          ? null
+                                          : (details) {
+                                              final box = _stackKey
+                                                      .currentContext!
+                                                      .findRenderObject()
+                                                  as RenderBox;
+                                              final localPos = box
+                                                  .globalToLocal(
+                                                      details.focalPoint);
+                                              final anchor =
+                                                  _dragAnchor ?? Offset.zero;
+                                              setState(() {
+                                                final newOffset =
+                                                    localPos - anchor;
+                                                item.offset = Offset(
+                                                  newOffset.dx.clamp(-40.0,
+                                                      constraints.maxWidth - 20),
+                                                  newOffset.dy.clamp(-40.0,
+                                                      constraints.maxHeight - 20),
+                                                );
+                                                if (details.pointerCount > 1) {
+                                                  item.scale =
+                                                      (_itemStartScale! *
+                                                              details.scale)
+                                                          .clamp(0.3, 4.0);
+                                                  item.rotation =
+                                                      _itemStartRotation! +
+                                                          details.rotation;
+                                                }
+                                              });
+                                            },
                                       onScaleEnd: (_) => _dragAnchor = null,
                                       child: Transform.rotate(
                                         angle: item.rotation,
@@ -396,40 +556,71 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                             clipBehavior: Clip.none,
                                             children: [
                                               Container(
-                                                padding: const EdgeInsets.all(12),
+                                                padding:
+                                                    const EdgeInsets.all(12),
                                                 constraints: BoxConstraints(
-                                                  maxWidth: item.isSticker ? double.infinity : _canvasWidth - 40,
+                                                  maxWidth: item.isSticker
+                                                      ? double.infinity
+                                                      : _canvasWidth - 40,
                                                 ),
                                                 decoration: BoxDecoration(
                                                   border: Border.all(
-                                                    color: isFocused ? Colors.cyanAccent : Colors.transparent,
+                                                    color: isFocused
+                                                        ? Colors.cyanAccent
+                                                        : Colors.transparent,
                                                     width: 2,
                                                   ),
-                                                  borderRadius: BorderRadius.circular(12),
+                                                  borderRadius:
+                                                      BorderRadius.circular(12),
                                                 ),
                                                 child: item.isSticker
                                                     ? Container(
-                                                        padding: const EdgeInsets.all(8),
-                                                        decoration: BoxDecoration(
+                                                        padding:
+                                                            const EdgeInsets
+                                                                .all(8),
+                                                        decoration:
+                                                            BoxDecoration(
                                                           color: item.color,
-                                                          shape: BoxShape.circle,
+                                                          shape:
+                                                              BoxShape.circle,
                                                         ),
-                                                        child: Icon(item.stickerIcon, size: 36, color: Colors.white),
+                                                        child: Icon(
+                                                            item.stickerIcon,
+                                                            size: 36,
+                                                            color:
+                                                                Colors.white),
                                                       )
                                                     : Text(
                                                         item.content,
-                                                        textAlign: TextAlign.center,
+                                                        textAlign:
+                                                            TextAlign.center,
                                                         softWrap: true,
                                                         style: TextStyle(
-                                                          fontSize: item.fontSize,
-                                                          fontFamily: item.fontFamily,
+                                                          fontSize: item
+                                                              .fontSize,
+                                                          fontFamily: item
+                                                              .fontFamily,
                                                           color: item.color,
-                                                          fontWeight: item.bold ? FontWeight.bold : FontWeight.normal,
-                                                          fontStyle: item.italic ? FontStyle.italic : FontStyle.normal,
-                                                          letterSpacing: item.letterSpacing,
-                                                          decoration: TextDecoration.combine([
-                                                            if (item.underline) TextDecoration.underline,
-                                                            if (item.strikethrough) TextDecoration.lineThrough,
+                                                          fontWeight: item.bold
+                                                              ? FontWeight.bold
+                                                              : FontWeight
+                                                                  .normal,
+                                                          fontStyle: item.italic
+                                                              ? FontStyle.italic
+                                                              : FontStyle
+                                                                  .normal,
+                                                          letterSpacing: item
+                                                              .letterSpacing,
+                                                          decoration:
+                                                              TextDecoration
+                                                                  .combine([
+                                                            if (item.underline)
+                                                              TextDecoration
+                                                                  .underline,
+                                                            if (item
+                                                                .strikethrough)
+                                                              TextDecoration
+                                                                  .lineThrough,
                                                           ]),
                                                         ),
                                                       ),
@@ -441,12 +632,19 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                                   child: GestureDetector(
                                                     onTap: _removeActiveItem,
                                                     child: Container(
-                                                      padding: const EdgeInsets.all(4),
-                                                      decoration: const BoxDecoration(
-                                                        color: Colors.pinkAccent,
+                                                      padding:
+                                                          const EdgeInsets.all(
+                                                              4),
+                                                      decoration:
+                                                          const BoxDecoration(
+                                                        color:
+                                                            Colors.pinkAccent,
                                                         shape: BoxShape.circle,
                                                       ),
-                                                      child: const Icon(Icons.close, size: 16, color: Colors.white),
+                                                      child: const Icon(
+                                                          Icons.close,
+                                                          size: 16,
+                                                          color: Colors.white),
                                                     ),
                                                   ),
                                                 ),
@@ -467,7 +665,7 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                 ),
               ),
 
-              // Bottom Panel (Styling & Stickers)
+              // ── Bottom Panel ─────────────────────────────────────────────
               Expanded(
                 flex: 3,
                 child: Opacity(
@@ -475,14 +673,17 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                   child: IgnorePointer(
                     ignoring: _isSaving,
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16.0, vertical: 8.0),
                       child: NeumorphicCard(
                         borderRadius: 24,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
                         child: SingleChildScrollView(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              // Item style panel (visible when an item is selected)
                               if (activeItem != null) ...[
                                 EditorStylePanel(
                                   activeItem: activeItem,
@@ -490,35 +691,48 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                   onDelete: _removeActiveItem,
                                 ),
                               ],
+
+                              // Sticker / emoji picker
                               EmojiStickerPicker(
                                 onEmojiPicked: _addEmojiItem,
                                 onStickerPicked: _addStickerItem,
                               ),
                               const SizedBox(height: 16),
+
+                              // Background colour row
                               Row(
                                 children: [
-                                  const Text('Background:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                                  const Text('Background:',
+                                      style: TextStyle(
+                                          color: Colors.white70, fontSize: 12)),
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: SizedBox(
                                       height: 30,
                                       child: ListView.builder(
                                         scrollDirection: Axis.horizontal,
-                                        itemCount: ColorSwatchPicker.colorPalette.length,
+                                        itemCount: ColorSwatchPicker
+                                            .colorPalette.length,
                                         itemBuilder: (ctx, idx) {
-                                          final c = ColorSwatchPicker.colorPalette[idx];
+                                          final c = ColorSwatchPicker
+                                              .colorPalette[idx];
                                           final isSelected = c == _bgColor;
                                           return GestureDetector(
-                                            onTap: () => _setBackgroundColor(c),
+                                            onTap: () =>
+                                                _setBackgroundColor(c),
                                             child: Container(
                                               width: 26,
                                               height: 26,
-                                              margin: const EdgeInsets.symmetric(horizontal: 3),
+                                              margin:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 3),
                                               decoration: BoxDecoration(
                                                 color: c,
                                                 shape: BoxShape.circle,
                                                 border: Border.all(
-                                                  color: isSelected ? Colors.cyanAccent : Colors.white24,
+                                                  color: isSelected
+                                                      ? Colors.cyanAccent
+                                                      : Colors.white24,
                                                   width: isSelected ? 2 : 1,
                                                 ),
                                               ),
@@ -529,21 +743,76 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                                     ),
                                   ),
                                   const SizedBox(width: 6),
+                                  // Custom colour picker
                                   GestureDetector(
-                                    onTap: () => ColorSwatchPicker.showCustomColorPicker(context, _bgColor, _setBackgroundColor),
+                                    onTap: () =>
+                                        ColorSwatchPicker.showCustomColorPicker(
+                                            context,
+                                            _bgColor,
+                                            _setBackgroundColor),
                                     child: Container(
                                       width: 30,
                                       height: 30,
                                       decoration: BoxDecoration(
                                         shape: BoxShape.circle,
-                                        border: Border.all(color: Colors.white24, width: 1.5),
+                                        border: Border.all(
+                                            color: Colors.white24, width: 1.5),
                                         gradient: const SweepGradient(
-                                          colors: [Colors.red, Colors.yellow, Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.red],
+                                          colors: [
+                                            Colors.red,
+                                            Colors.yellow,
+                                            Colors.green,
+                                            Colors.cyan,
+                                            Colors.blue,
+                                            Colors.purple,
+                                            Colors.red
+                                          ],
                                         ),
                                       ),
-                                      child: const Icon(Icons.add, size: 16, color: Colors.white),
+                                      child: const Icon(Icons.add,
+                                          size: 16, color: Colors.white),
                                     ),
                                   ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+
+                              // Photo background management buttons
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: NeumorphicButton(
+                                      borderRadius: 12,
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 10),
+                                      icon: Icon(
+                                        hasPhoto
+                                            ? Icons.image
+                                            : Icons.add_photo_alternate_outlined,
+                                        size: 18,
+                                        color: AppColors.cyanAccent,
+                                      ),
+                                      label:
+                                          hasPhoto ? 'Change Photo' : 'Add Photo',
+                                      textColor: Colors.white,
+                                      onPressed: _pickBackgroundPhoto,
+                                    ),
+                                  ),
+                                  if (hasPhoto) ...[
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: NeumorphicButton(
+                                        borderRadius: 12,
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: 10),
+                                        icon: const Icon(Icons.hide_image_outlined,
+                                            size: 18, color: AppColors.pinkAccent),
+                                        label: 'Remove Photo',
+                                        textColor: Colors.white,
+                                        onPressed: _removeBackgroundPhoto,
+                                      ),
+                                    ),
+                                  ],
                                 ],
                               ),
                             ],
@@ -557,10 +826,10 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
             ],
           ),
 
-          // Floating Reposition Panel
+          // ── Floating Reposition Panel ────────────────────────────────────
           if (_repositioningBackground)
             Positioned(
-              bottom: MediaQuery.of(context).size.height * 0.4, // float above the bottom panel
+              bottom: MediaQuery.of(context).size.height * 0.4,
               left: 16,
               right: 16,
               child: RepaintBoundary(
@@ -575,12 +844,16 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                         children: [
                           const Text(
                             'Background Tools',
-                            style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                                color: Colors.cyanAccent,
+                                fontWeight: FontWeight.bold),
                           ),
                           TextButton.icon(
                             onPressed: _resetBackgroundTransform,
-                            icon: const Icon(Icons.restore, color: Colors.pinkAccent, size: 16),
-                            label: const Text('Reset', style: TextStyle(color: Colors.pinkAccent)),
+                            icon: const Icon(Icons.restore,
+                                color: Colors.pinkAccent, size: 16),
+                            label: const Text('Reset',
+                                style: TextStyle(color: Colors.pinkAccent)),
                           ),
                         ],
                       ),
@@ -589,43 +862,51 @@ class _ImageEditorPageState extends State<ImageEditorPage> with SingleTickerProv
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
                           NeumorphicIconButton(
-                            icon: const Icon(Icons.rotate_left, color: Colors.white),
-                            onPressed: () => _quickRotateBackground(-math.pi / 2),
+                            icon: const Icon(Icons.rotate_left,
+                                color: Colors.white),
+                            onPressed: () =>
+                                _quickRotateBackground(-math.pi / 2),
                             borderRadius: 24,
                             padding: const EdgeInsets.all(8),
                           ),
                           NeumorphicIconButton(
-                            icon: const Icon(Icons.zoom_out, color: Colors.white),
+                            icon:
+                                const Icon(Icons.zoom_out, color: Colors.white),
                             onPressed: () => _stepZoomBackground(-0.1),
                             borderRadius: 24,
                             padding: const EdgeInsets.all(8),
                           ),
                           NeumorphicIconButton(
-                            icon: const Icon(Icons.zoom_in, color: Colors.white),
+                            icon:
+                                const Icon(Icons.zoom_in, color: Colors.white),
                             onPressed: () => _stepZoomBackground(0.1),
                             borderRadius: 24,
                             padding: const EdgeInsets.all(8),
                           ),
                           NeumorphicIconButton(
-                            icon: const Icon(Icons.rotate_right, color: Colors.white),
-                            onPressed: () => _quickRotateBackground(math.pi / 2),
+                            icon: const Icon(Icons.rotate_right,
+                                color: Colors.white),
+                            onPressed: () =>
+                                _quickRotateBackground(math.pi / 2),
                             borderRadius: 24,
                             padding: const EdgeInsets.all(8),
                           ),
                         ],
                       ),
                       const SizedBox(height: 12),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-              ),
             ),
-            
+
+          // ── Saving overlay ───────────────────────────────────────────────
           if (_isSaving)
             Container(
               color: Colors.black54,
               child: const Center(
-                child: CircularProgressIndicator(color: Colors.cyanAccent),
+                child:
+                    CircularProgressIndicator(color: AppColors.cyanAccent),
               ),
             ),
         ],

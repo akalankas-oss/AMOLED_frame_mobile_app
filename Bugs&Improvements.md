@@ -96,23 +96,77 @@ Comprehensive audit and analysis of the Flutter mobile application (`AMOLED_fram
 
 ---
 
-## 3. Suggested Improvements & Enhancements
+## 3. Improvements & Enhancements Status
 
 ### Architectural & Code Quality Improvements
-1. **Unify Protocol & BLE Layer:** Move all BLE operations into `FrameBleService`, establishing a clean single source of truth for connection state, queue management, and GATT interactions.
-2. **Add Command Identification / CRC Verification:** Add packet IDs to requests and verify payload CRCs on incoming download streams to catch corrupted chunks over wireless BLE links.
-3. **Refactor State Management:** Adopt a structured state management solution (e.g., `Notifier`/`ChangeNotifier` or `Riverpod`/`Bloc`) to separate BLE background operations from UI widget state.
+
+#### 1. Unify Protocol & BLE Layer
+- **Status:** **Completed** (Resolved alongside Bug #4)
+- **Location:** [`lib/ble/frame_ble_service.dart`](AMOLED_frame_mobile_app/lib/ble/frame_ble_service.dart) & [`lib/pages/frame_page.dart`](AMOLED_frame_mobile_app/lib/pages/frame_page.dart)
+- **Details:** Consolidated BLE operations, connection lifecycle, task queueing, notifications, and GATT transfers into the `FrameBleService` singleton. `_FramePageState` now delegates exclusively to `FrameBleService.instance`.
+
+---
+
+#### 2. Add Command Identification / CRC Verification
+- **Status:** **Completed** (CRC-16 CCITT Header Packing) / **Pending** (Incoming Stream Verification)
+- **Location:** [`lib/ble/frame_protocol.dart` (lines 34–56)](AMOLED_frame_mobile_app/lib/ble/frame_protocol.dart#L34-L56)
+- **Details:** 
+  - ✅ Implemented `crc16Ccitt()` and header CRC packing inside `buildHeader()`.
+  - ⏳ Inbound download chunk CRC validation from firmware stream can be added when firmware protocol supports download stream checksums.
+
+---
+
+#### 3. Refactor State Management
+- **Status:** **Pending**
+- **Location:** [`lib/pages/frame_page.dart`](AMOLED_frame_mobile_app/lib/pages/frame_page.dart)
+- **Details:** `_FramePageState` manages presentation, multi-step image pipelines, and page state locally using `setState`. Moving business logic to `ChangeNotifier` / `ValueNotifier` or a state management library (e.g., `flutter_bloc` / `riverpod`) will decouple UI from device communications and improve testability.
+
+---
 
 ### UI / UX Enhancements
-1. **Multi-Item Upload Progress Indicator:** Replace the indeterminate `LinearProgressIndicator` with a detailed progress widget showing "Uploading image X of Y (Z%)" during bulk uploads (`_sendSelectedToDevice`, `_startRotation`, `_deleteSelectedImages`).
-2. **In-App Device Log & Console Viewer:** Surface BLE logs (`_addLog`) in an expandable debug panel or bottom sheet so users can diagnose connection issues without attached IDE debuggers.
-3. **Auto-Reconnect & Persistent Offline Banner:** Display a sleek banner when connection drops and implement automatic exponential-backoff background reconnection.
-4. **Per-Image Deletion Firmware Protocol Support:** Request/implement per-index image deletion in the firmware protocol to avoid the expensive O(N) download-all -> format-device -> re-upload-remaining deletion workaround.
+
+#### 4. Multi-Item Upload Progress Indicator
+- **Status:** **Pending**
+- **Location:** [`lib/pages/frame_page.dart` (lines 1018–1022)](AMOLED_frame_mobile_app/lib/pages/frame_page.dart#L1018-L1022)
+- **Details:** Currently uses an indeterminate `LinearProgressIndicator`. Needs a determinate multi-stage progress component displaying "Uploading image X of Y (Z%)" during bulk uploads (`_sendSelectedToDevice`), playlist sync, and delete/re-upload routines.
+
+---
+
+#### 5. In-App Device Log & Console Viewer
+- **Status:** **Pending** (Backend logging ready, UI widget pending)
+- **Location:** [`lib/pages/frame_page.dart` (lines 101–106)](AMOLED_frame_mobile_app/lib/pages/frame_page.dart#L101-L106)
+- **Details:** `_addLog()` already collects logs into an in-memory `List<String> _log`, but there is no UI component rendering it. An expandable bottom sheet or collapsible debug log viewer should be added so users and testers can view real-time BLE transaction logs directly in the app.
+
+---
+
+#### 6. Auto-Reconnect & Persistent Offline Banner
+- **Status:** **Pending**
+- **Location:** [`lib/ble/frame_ble_service.dart`](AMOLED_frame_mobile_app/lib/ble/frame_ble_service.dart) & [`lib/pages/frame_page.dart`](AMOLED_frame_mobile_app/lib/pages/frame_page.dart)
+- **Details:** Currently displays an "Offline" badge and a manual "Reconnect" button. Needs automated exponential backoff reconnection upon unexpected disconnection and a non-intrusive persistent status banner.
+
+---
+
+#### 7. Per-Image Deletion Firmware Protocol Support
+- **Status:** **Pending** (Firmware + App Protocol Extension)
+- **Location:** [`lib/ble/frame_protocol.dart`](AMOLED_frame_mobile_app/lib/ble/frame_protocol.dart) & [`lib/pages/frame_page.dart` (lines 700–800)](AMOLED_frame_mobile_app/lib/pages/frame_page.dart#L700-L800)
+- **Details:** App currently executes a costly workaround to delete images (downloads all items to disk, formats flash via `formatCmdMagic`, then re-uploads kept items). Introducing a dedicated `CMD_DELETE` (by index/slot) in the ESP32-P4 firmware and app protocol will make image deletion instantaneous.
+
+---
 
 ### Testing & QA Strategy
-1. **Unit Tests for Protocol Framing & Math:** Write comprehensive unit tests for:
-   - `crc16Ccitt` calculation against known hardware test vectors.
-   - `buildHeader` byte packing and endianness.
-   - `fitImageToPanel` crop, scale, and 90° CW rotation dimensions.
-   - `renderTextToPanelImage` rendering outputs.
-2. **Widget Tests:** Replace `test/widget_test.dart` boilerplate with actual UI tests validating screen navigation, picker interactions, and button state gating.
+
+#### 8. Unit Tests for Protocol Framing & Math
+- **Status:** **Pending**
+- **Location:** `test/` (`test/ble_protocol_test.dart`, `test/image_math_test.dart`)
+- **Details:** Add automated unit tests for:
+  - `crc16Ccitt` checksum against known vector standards.
+  - `buildHeader` byte alignment and endianness.
+  - `fitImageToPanel` cropping, aspect ratios, and 90° CW rotation dimensions (192×960).
+  - `renderTextToPanelImage` text layout constraints and output image bounds.
+
+---
+
+#### 9. Widget & Integration Tests
+- **Status:** **Pending**
+- **Location:** [`test/widget_test.dart`](AMOLED_frame_mobile_app/test/widget_test.dart)
+- **Details:** Replace starter widget test template with UI smoke tests for navigation, editor canvas interactions, sticker/color pickers, and disconnected/connected state toggles.

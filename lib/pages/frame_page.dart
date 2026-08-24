@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:image/image.dart' as image_lib;
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -11,9 +10,7 @@ import '../models/sent_image.dart';
 import '../utils/image_utils.dart';
 import 'flash_banner_page.dart';
 import 'image_editor_page.dart';
-import 'text_composer_page.dart';
 import '../widgets/neumorphic_components.dart';
-import '../widgets/color_swatch_picker.dart';
 
 // ── Animated sequence thumbnail ───────────────────────────────────────────
 /// Cycles through the thumbnails of a multi-frame sequence at ~8 fps.
@@ -257,21 +254,10 @@ class _FramePageState extends State<FramePage> {
                 icon: Icons.add_photo_alternate_outlined,
                 iconColor: AppColors.pinkAccent,
                 title: 'Create Image',
-                subtitle: 'Pick & edit with stickers / text',
+                subtitle: 'Design with colors, text, photos & stickers',
                 onTap: () {
                   Navigator.pop(ctx);
-                  _createImageWithEditing();
-                },
-              ),
-              const SizedBox(height: 12),
-              _buildAddOption(
-                icon: Icons.text_fields,
-                iconColor: AppColors.amberAccent,
-                title: 'Create Text',
-                subtitle: 'Compose styled text for the frame',
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _createTextImage();
+                  _openCreateImageStudio();
                 },
               ),
               const SizedBox(height: 12),
@@ -283,17 +269,6 @@ class _FramePageState extends State<FramePage> {
                 onTap: () {
                   Navigator.pop(ctx);
                   _openFlashBanner();
-                },
-              ),
-              const SizedBox(height: 12),
-              _buildAddOption(
-                icon: Icons.format_color_fill,
-                iconColor: AppColors.greenAccent,
-                title: 'Solid Color',
-                subtitle: 'Send a solid color to the frame',
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _createSolidColorImage();
                 },
               ),
             ],
@@ -363,67 +338,29 @@ class _FramePageState extends State<FramePage> {
     }
   }
 
-  Future<Uint8List> _downscaleForEditing(Uint8List bytes, {int maxDimension = 1000}) async {
-    final rawDecoded = image_lib.decodeImage(bytes);
-    if (rawDecoded == null) return bytes;
-    final oriented = image_lib.bakeOrientation(rawDecoded);
 
-    if (oriented.width <= maxDimension && oriented.height <= maxDimension) {
-      return Uint8List.fromList(image_lib.encodeJpg(oriented, quality: 92));
-    }
-    final scale = maxDimension / (oriented.width > oriented.height ? oriented.width : oriented.height);
-    final resized = image_lib.copyResize(
-      oriented,
-      width: (oriented.width * scale).round(),
-      height: (oriented.height * scale).round(),
+  /// Opens the unified "Create Image" design studio.
+  /// No initial image is required — the user starts with a solid colour canvas
+  /// and can optionally add a photo background from within the editor.
+  Future<void> _openCreateImageStudio() async {
+    final editedBytes = await Navigator.of(context).push<Uint8List>(
+      MaterialPageRoute(builder: (_) => const ImageEditorPage()),
     );
-    return Uint8List.fromList(image_lib.encodeJpg(resized, quality: 92));
-  }
 
-  Future<void> _createImageWithEditing() async {
-    final file = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (file == null) return;
-    final rawBytes = await file.readAsBytes();
-    try {
-      final bytes = await _downscaleForEditing(rawBytes);
+    if (editedBytes != null) {
       if (!mounted) return;
-      final editedBytes = await Navigator.of(context).push<Uint8List>(
-        MaterialPageRoute(builder: (_) => ImageEditorPage(imageBytes: bytes)),
-      );
-
-      if (editedBytes != null) {
-        final thumb = makeThumbnail(editedBytes);
-        final image = SentImage(thumbnailBytes: thumb, label: 'Image ${_sentImages.length + 1}');
-        // Spill full bytes to a temp file; thumbnail stays in RAM for previews.
-        await image.persistFullBytes(editedBytes);
-        setState(() {
-          _sentImages.add(image);
-          _activeIndex = _sentImages.length - 1;
-        });
-      }
-    } catch (e) {
-      _addLog('Image processing failed: $e');
-    }
-  }
-
-  void _createSolidColorImage() {
-    ColorSwatchPicker.showCustomColorPicker(context, Colors.black, (c) async {
-      final imgBytes = await renderSolidColorToPanelImage(color: c);
-      final thumb = makeThumbnail(imgBytes);
-      final entry = SentImage(
+      final thumb = makeThumbnail(editedBytes);
+      final image = SentImage(
         thumbnailBytes: thumb,
-        label: 'Solid Color ${_sentImages.length + 1}',
-        needsDisplayRotation: true,
+        label: 'Image ${_sentImages.length + 1}',
       );
-      await entry.persistFullBytes(imgBytes);
-      if (!mounted) return;
+      await image.persistFullBytes(editedBytes);
       setState(() {
-        _sentImages.add(entry);
+        _sentImages.add(image);
         _activeIndex = _sentImages.length - 1;
       });
-    });
+    }
   }
-
 
   Future<void> _openFlashBanner() async {
     final frames = await Navigator.of(context).push<List<Uint8List>>(
@@ -455,22 +392,6 @@ class _FramePageState extends State<FramePage> {
     _addLog('Added banner sequence (${frames.length} frames) — press "Send Selected to Device" then "Start Rotation".');
   }
 
-  Future<void> _createTextImage() async {
-    final bytes = await Navigator.of(context).push<Uint8List>(
-      MaterialPageRoute(builder: (_) => const TextComposerPage()),
-    );
-    if (bytes != null) {
-      if (!mounted) return;
-      final thumb = makeThumbnail(bytes);
-      final image = SentImage(thumbnailBytes: thumb, label: 'Text ${_sentImages.length + 1}');
-      // Spill full bytes to a temp file; thumbnail stays in RAM for previews.
-      await image.persistFullBytes(bytes);
-      setState(() {
-        _sentImages.add(image);
-        _activeIndex = _sentImages.length - 1;
-      });
-    }
-  }
 
   Future<void> _showImageEntry(int index) async {
     if (_bleService.connState != FrameConnState.connected || _busy) return;
