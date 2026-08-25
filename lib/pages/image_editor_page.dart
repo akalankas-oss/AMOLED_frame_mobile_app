@@ -348,6 +348,33 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                   padding: const EdgeInsets.all(8.0),
                 ),
               ),
+            // Add Photo
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+              child: NeumorphicIconButton(
+                icon: Icon(
+                  hasPhoto ? Icons.image : Icons.add_photo_alternate_outlined,
+                  color: AppColors.cyanAccent,
+                  size: 20,
+                ),
+                onPressed: _pickBackgroundPhoto,
+                borderRadius: 24,
+                padding: const EdgeInsets.all(8.0),
+              ),
+            ),
+            if (hasPhoto)
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+                child: NeumorphicIconButton(
+                  icon: const Icon(Icons.hide_image_outlined,
+                      color: AppColors.pinkAccent, size: 20),
+                  onPressed: _removeBackgroundPhoto,
+                  borderRadius: 24,
+                  padding: const EdgeInsets.all(8.0),
+                ),
+              ),
             // Add Text
             Padding(
               padding:
@@ -692,13 +719,6 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                                 ),
                               ],
 
-                              // Sticker / emoji picker
-                              EmojiStickerPicker(
-                                onEmojiPicked: _addEmojiItem,
-                                onStickerPicked: _addStickerItem,
-                              ),
-                              const SizedBox(height: 16),
-
                               // Background colour row
                               Row(
                                 children: [
@@ -775,45 +795,12 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 16),
 
-                              // Photo background management buttons
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: NeumorphicButton(
-                                      borderRadius: 12,
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 10),
-                                      icon: Icon(
-                                        hasPhoto
-                                            ? Icons.image
-                                            : Icons.add_photo_alternate_outlined,
-                                        size: 18,
-                                        color: AppColors.cyanAccent,
-                                      ),
-                                      label:
-                                          hasPhoto ? 'Change Photo' : 'Add Photo',
-                                      textColor: Colors.white,
-                                      onPressed: _pickBackgroundPhoto,
-                                    ),
-                                  ),
-                                  if (hasPhoto) ...[
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: NeumorphicButton(
-                                        borderRadius: 12,
-                                        padding: const EdgeInsets.symmetric(
-                                            vertical: 10),
-                                        icon: const Icon(Icons.hide_image_outlined,
-                                            size: 18, color: AppColors.pinkAccent),
-                                        label: 'Remove Photo',
-                                        textColor: Colors.white,
-                                        onPressed: _removeBackgroundPhoto,
-                                      ),
-                                    ),
-                                  ],
-                                ],
+                              // Sticker / emoji picker
+                              EmojiStickerPicker(
+                                onEmojiPicked: _addEmojiItem,
+                                onStickerPicked: _addStickerItem,
                               ),
                             ],
                           ),
