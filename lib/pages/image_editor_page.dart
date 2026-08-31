@@ -8,6 +8,7 @@ import 'package:image/image.dart' as image_lib;
 import 'package:image_picker/image_picker.dart';
 
 import '../models/editor_item.dart';
+import '../pages/camera_capture_page.dart';
 import '../widgets/color_swatch_picker.dart';
 import '../widgets/editor_style_panel.dart';
 import '../widgets/emoji_sticker_picker.dart';
@@ -74,6 +75,21 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   void _removeBackgroundPhoto() {
     setState(() {
       _bgImageBytes = null;
+      _bgOffset = Offset.zero;
+      _bgScale = 1.0;
+      _bgRotation = 0.0;
+    });
+  }
+
+  /// Opens the dedicated [CameraCapturePage] and sets the returned 5:1 image
+  /// as the editor background.
+  Future<void> _openCamera() async {
+    final result = await Navigator.of(context).push<Uint8List>(
+      MaterialPageRoute(builder: (_) => const CameraCapturePage()),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _bgImageBytes = result;
       _bgOffset = Offset.zero;
       _bgScale = 1.0;
       _bgRotation = 0.0;
@@ -359,6 +375,18 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                   size: 20,
                 ),
                 onPressed: _pickBackgroundPhoto,
+                borderRadius: 24,
+                padding: const EdgeInsets.all(8.0),
+              ),
+            ),
+            // Add Photo via Camera
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+              child: NeumorphicIconButton(
+                icon: const Icon(Icons.camera_alt_outlined,
+                    color: Colors.greenAccent, size: 20),
+                onPressed: _openCamera,
                 borderRadius: 24,
                 padding: const EdgeInsets.all(8.0),
               ),
