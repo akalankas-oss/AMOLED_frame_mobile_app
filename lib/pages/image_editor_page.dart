@@ -56,6 +56,40 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   // Optional photo layer on top of the solid colour.
   Uint8List? _bgImageBytes;
 
+  // ── Undo Stack ────────────────────────────────────────────────────────────
+
+  static const int _maxUndoSteps = 30;
+  final List<_EditorSnapshot> _undoStack = [];
+
+  void _pushUndo() {
+    _undoStack.add(_EditorSnapshot(
+      items: _placedItems.map((e) => e.clone()).toList(),
+      bgColor: _bgColor,
+      bgImageBytes: _bgImageBytes,
+      bgOffset: _bgOffset,
+      bgScale: _bgScale,
+      bgRotation: _bgRotation,
+    ));
+    if (_undoStack.length > _maxUndoSteps) _undoStack.removeAt(0);
+  }
+
+  void _applyUndo() {
+    if (_undoStack.isEmpty) return;
+    final snap = _undoStack.removeLast();
+    setState(() {
+      _placedItems
+        ..clear()
+        ..addAll(snap.items);
+      _bgColor = snap.bgColor;
+      _bgImageBytes = snap.bgImageBytes;
+      _bgOffset = snap.bgOffset;
+      _bgScale = snap.bgScale;
+      _bgRotation = snap.bgRotation;
+      _selectedIdx = null;
+      _repositioningBackground = false;
+    });
+  }
+
   // ── Background photo management ─────────────────────────────────────────
 
   Future<void> _pickBackgroundPhoto() async {
@@ -64,6 +98,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
     final rawBytes = await file.readAsBytes();
     final bytes = await _downscaleForEditing(rawBytes);
     if (!mounted) return;
+    _pushUndo();
     setState(() {
       _bgImageBytes = bytes;
       _bgOffset = Offset.zero;
@@ -73,6 +108,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   }
 
   void _removeBackgroundPhoto() {
+    _pushUndo();
     setState(() {
       _bgImageBytes = null;
       _bgOffset = Offset.zero;
@@ -88,6 +124,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       MaterialPageRoute(builder: (_) => const CameraCapturePage()),
     );
     if (result == null || !mounted) return;
+    _pushUndo();
     setState(() {
       _bgImageBytes = result;
       _bgOffset = Offset.zero;
@@ -124,6 +161,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   }
 
   void _resetBackgroundTransform() {
+    _pushUndo();
     setState(() {
       _bgOffset = Offset.zero;
       _bgScale = 1.0;
@@ -132,14 +170,17 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   }
 
   void _quickRotateBackground(double radians) {
+    _pushUndo();
     setState(() => _bgRotation += radians);
   }
 
   void _stepZoomBackground(double delta) {
+    _pushUndo();
     setState(() => _bgScale = (_bgScale + delta).clamp(0.5, 6.0));
   }
 
   void _setBackgroundColor(Color color) {
+    _pushUndo();
     setState(() => _bgColor = color);
   }
 
@@ -158,6 +199,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   void _addEmojiItem(String standardText) {
     final uniqueId = DateTime.now().microsecondsSinceEpoch.toString();
     final size = _canvasSize ?? const Size(_canvasWidth, _canvasHeight);
+    _pushUndo();
     setState(() {
       _placedItems.add(EditorItem(
         id: uniqueId,
@@ -172,6 +214,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   void _addStickerItem(IconData icon) {
     final uniqueId = DateTime.now().microsecondsSinceEpoch.toString();
     final size = _canvasSize ?? const Size(_canvasWidth, _canvasHeight);
+    _pushUndo();
     setState(() {
       _placedItems.add(EditorItem(
         id: uniqueId,
@@ -185,6 +228,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   }
 
   void _removeItemAt(int idx) {
+    _pushUndo();
     setState(() {
       _placedItems.removeAt(idx);
       if (_selectedIdx == idx) {
@@ -343,78 +387,16 @@ class _ImageEditorPageState extends State<ImageEditorPage>
         ),
         actions: [
           if (!_isSaving) ...[
-            // Reposition toggle (only visible when a photo is loaded)
-            if (hasPhoto)
+            if (_undoStack.isNotEmpty)
               Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+                padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
                 child: NeumorphicIconButton(
-                  icon: Icon(
-                    _repositioningBackground
-                        ? Icons.check_circle
-                        : Icons.crop_rotate,
-                    color: _repositioningBackground
-                        ? Colors.greenAccent
-                        : Colors.cyanAccent,
-                    size: 20,
-                  ),
-                  isActive: _repositioningBackground,
-                  onPressed: _toggleReposition,
+                  icon: const Icon(Icons.undo, color: Colors.white70, size: 20),
+                  onPressed: _applyUndo,
                   borderRadius: 24,
                   padding: const EdgeInsets.all(8.0),
                 ),
               ),
-            // Add Photo
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-              child: NeumorphicIconButton(
-                icon: Icon(
-                  hasPhoto ? Icons.image : Icons.add_photo_alternate_outlined,
-                  color: AppColors.cyanAccent,
-                  size: 20,
-                ),
-                onPressed: _pickBackgroundPhoto,
-                borderRadius: 24,
-                padding: const EdgeInsets.all(8.0),
-              ),
-            ),
-            // Add Photo via Camera
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-              child: NeumorphicIconButton(
-                icon: const Icon(Icons.camera_alt_outlined,
-                    color: Colors.greenAccent, size: 20),
-                onPressed: _openCamera,
-                borderRadius: 24,
-                padding: const EdgeInsets.all(8.0),
-              ),
-            ),
-            if (hasPhoto)
-              Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-                child: NeumorphicIconButton(
-                  icon: const Icon(Icons.hide_image_outlined,
-                      color: AppColors.pinkAccent, size: 20),
-                  onPressed: _removeBackgroundPhoto,
-                  borderRadius: 24,
-                  padding: const EdgeInsets.all(8.0),
-                ),
-              ),
-            // Add Text
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
-              child: NeumorphicIconButton(
-                icon: const Icon(Icons.text_fields,
-                    color: Colors.amberAccent, size: 20),
-                onPressed: _openCustomTextInput,
-                borderRadius: 24,
-                padding: const EdgeInsets.all(8.0),
-              ),
-            ),
             // Save
             Padding(
               padding:
@@ -472,6 +454,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                                         onScaleStart: !bgGesturesEnabled
                                             ? null
                                             : (details) {
+                                                _pushUndo();
                                                 _bgGestureStartScale = _bgScale;
                                                 _bgGestureStartRotation =
                                                     _bgRotation;
@@ -554,6 +537,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                                       onScaleStart: !itemGesturesEnabled
                                           ? null
                                           : (details) {
+                                              _pushUndo();
                                               final box = _stackKey
                                                       .currentContext!
                                                       .findRenderObject()
@@ -738,11 +722,77 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: [
+                                    if (hasPhoto)
+                                      Padding(
+                                        padding: const EdgeInsets.only(right: 8.0),
+                                        child: NeumorphicIconButton(
+                                          icon: Icon(
+                                            _repositioningBackground ? Icons.check_circle : Icons.crop_rotate,
+                                            color: _repositioningBackground ? Colors.greenAccent : Colors.cyanAccent,
+                                            size: 20,
+                                          ),
+                                          isActive: _repositioningBackground,
+                                          onPressed: _toggleReposition,
+                                          borderRadius: 24,
+                                          padding: const EdgeInsets.all(8.0),
+                                        ),
+                                      ),
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 8.0),
+                                      child: NeumorphicIconButton(
+                                        icon: Icon(
+                                          hasPhoto ? Icons.image : Icons.add_photo_alternate_outlined,
+                                          color: AppColors.cyanAccent,
+                                          size: 20,
+                                        ),
+                                        onPressed: _pickBackgroundPhoto,
+                                        borderRadius: 24,
+                                        padding: const EdgeInsets.all(8.0),
+                                      ),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 8.0),
+                                      child: NeumorphicIconButton(
+                                        icon: const Icon(Icons.camera_alt_outlined, color: Colors.greenAccent, size: 20),
+                                        onPressed: _openCamera,
+                                        borderRadius: 24,
+                                        padding: const EdgeInsets.all(8.0),
+                                      ),
+                                    ),
+                                    if (hasPhoto)
+                                      Padding(
+                                        padding: const EdgeInsets.only(right: 8.0),
+                                        child: NeumorphicIconButton(
+                                          icon: const Icon(Icons.hide_image_outlined, color: AppColors.pinkAccent, size: 20),
+                                          onPressed: _removeBackgroundPhoto,
+                                          borderRadius: 24,
+                                          padding: const EdgeInsets.all(8.0),
+                                        ),
+                                      ),
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 8.0),
+                                      child: NeumorphicIconButton(
+                                        icon: const Icon(Icons.text_fields, color: Colors.amberAccent, size: 20),
+                                        onPressed: _openCustomTextInput,
+                                        borderRadius: 24,
+                                        padding: const EdgeInsets.all(8.0),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+
                               // Item style panel (visible when an item is selected)
                               if (activeItem != null) ...[
                                 EditorStylePanel(
                                   activeItem: activeItem,
                                   onChanged: () => setState(() {}),
+                                  onEditStart: _pushUndo,
                                   onDelete: _removeActiveItem,
                                 ),
                               ],
@@ -928,4 +978,22 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       ),
     );
   }
+}
+
+class _EditorSnapshot {
+  final List<EditorItem> items;
+  final Color bgColor;
+  final Uint8List? bgImageBytes;
+  final Offset bgOffset;
+  final double bgScale;
+  final double bgRotation;
+
+  const _EditorSnapshot({
+    required this.items,
+    required this.bgColor,
+    this.bgImageBytes,
+    required this.bgOffset,
+    required this.bgScale,
+    required this.bgRotation,
+  });
 }

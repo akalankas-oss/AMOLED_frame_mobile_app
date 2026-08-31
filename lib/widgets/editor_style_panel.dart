@@ -8,12 +8,14 @@ class EditorStylePanel extends StatelessWidget {
   final EditorItem activeItem;
   final VoidCallback onChanged;
   final VoidCallback onDelete;
+  final VoidCallback? onEditStart;
 
   const EditorStylePanel({
     super.key,
     required this.activeItem,
     required this.onChanged,
     required this.onDelete,
+    this.onEditStart,
   });
 
   Widget _styleToggleButton({required IconData icon, required bool active, required VoidCallback onTap}) {
@@ -34,6 +36,7 @@ class EditorStylePanel extends StatelessWidget {
         label: Text(label, style: TextStyle(fontFamily: family, fontSize: 12)),
         selected: selected,
         onSelected: (_) {
+          onEditStart?.call();
           activeItem.fontFamily = family;
           onChanged();
         },
@@ -57,6 +60,7 @@ class EditorStylePanel extends StatelessWidget {
                 value: activeItem.scale,
                 min: 0.3,
                 max: 4.0,
+                onChangeStart: (_) => onEditStart?.call(),
                 onChanged: (v) {
                   activeItem.scale = v;
                   onChanged();
@@ -81,6 +85,7 @@ class EditorStylePanel extends StatelessWidget {
                 value: ((activeItem.rotation * 180 / math.pi) % 360 + 360) % 360,
                 min: 0,
                 max: 360,
+                onChangeStart: (_) => onEditStart?.call(),
                 onChanged: (v) {
                   activeItem.rotation = v * math.pi / 180;
                   onChanged();
@@ -105,6 +110,7 @@ class EditorStylePanel extends StatelessWidget {
                   value: activeItem.fontSize,
                   min: 12,
                   max: 90,
+                  onChangeStart: (_) => onEditStart?.call(),
                   onChanged: (v) {
                     activeItem.fontSize = v;
                     onChanged();
@@ -128,6 +134,7 @@ class EditorStylePanel extends StatelessWidget {
                   value: activeItem.letterSpacing,
                   min: -2,
                   max: 20,
+                  onChangeStart: (_) => onEditStart?.call(),
                   onChanged: (v) {
                     activeItem.letterSpacing = v;
                     onChanged();
@@ -150,6 +157,7 @@ class EditorStylePanel extends StatelessWidget {
                 icon: Icons.format_bold,
                 active: activeItem.bold,
                 onTap: () {
+                  onEditStart?.call();
                   activeItem.bold = !activeItem.bold;
                   onChanged();
                 },
@@ -158,6 +166,7 @@ class EditorStylePanel extends StatelessWidget {
                 icon: Icons.format_italic,
                 active: activeItem.italic,
                 onTap: () {
+                  onEditStart?.call();
                   activeItem.italic = !activeItem.italic;
                   onChanged();
                 },
@@ -166,6 +175,7 @@ class EditorStylePanel extends StatelessWidget {
                 icon: Icons.format_underline,
                 active: activeItem.underline,
                 onTap: () {
+                  onEditStart?.call();
                   activeItem.underline = !activeItem.underline;
                   onChanged();
                 },
@@ -174,6 +184,7 @@ class EditorStylePanel extends StatelessWidget {
                 icon: Icons.format_strikethrough,
                 active: activeItem.strikethrough,
                 onTap: () {
+                  onEditStart?.call();
                   activeItem.strikethrough = !activeItem.strikethrough;
                   onChanged();
                 },
@@ -204,6 +215,7 @@ class EditorStylePanel extends StatelessWidget {
         ColorSwatchPicker(
           activeColor: activeItem.color,
           onColorPicked: (c) {
+            onEditStart?.call();
             activeItem.color = c;
             onChanged();
           },

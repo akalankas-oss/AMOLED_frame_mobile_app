@@ -36,4 +36,24 @@ class EditorItem {
   bool underline;
   bool strikethrough;
   double letterSpacing;
+
+  EditorItem clone() {
+    return EditorItem(
+      id: id,
+      content: content,
+      isSticker: isSticker,
+      stickerIcon: stickerIcon,
+      offset: offset,
+      scale: scale,
+      rotation: rotation,
+      color: color,
+      fontSize: fontSize,
+      fontFamily: fontFamily,
+      bold: bold,
+      italic: italic,
+      underline: underline,
+      strikethrough: strikethrough,
+      letterSpacing: letterSpacing,
+    );
+  }
 }
