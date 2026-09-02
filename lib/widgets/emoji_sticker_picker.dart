@@ -1,48 +1,12 @@
 import 'package:flutter/material.dart';
 
-class EmojiStickerPicker extends StatefulWidget {
-  final ValueChanged<String> onEmojiPicked;
+class EmojiStickerPicker extends StatelessWidget {
   final ValueChanged<IconData> onStickerPicked;
 
   const EmojiStickerPicker({
     super.key,
-    required this.onEmojiPicked,
     required this.onStickerPicked,
   });
-
-  @override
-  State<EmojiStickerPicker> createState() => _EmojiStickerPickerState();
-}
-
-class _EmojiStickerPickerState extends State<EmojiStickerPicker> with SingleTickerProviderStateMixin {
-  late final TabController _tabController;
-
-  static const Map<String, List<String>> _emojiCategories = {
-    'Smileys': [
-      '😀', '😁', '😂', '🤣', '😊', '😍', '😘', '😜', '🤪', '😎',
-      '🥳', '😇', '🙃', '🤩', '😢', '😭', '😡', '🤔', '😴', '🤗',
-      '😏', '😅', '🥰', '😋', '🤤', '😱', '🥺', '😤', '🤯', '🥶',
-    ],
-    'Hands & Hearts': [
-      '👍', '👎', '👏', '🙌', '🤝', '💪', '✌️', '🤞', '👌', '🤙',
-      '👋', '🤟', '🫶', '✋', '🖐️', '🙏',
-      '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '💔', '💯',
-      '💕', '💖', '💗', '💞',
-    ],
-    'Nature': [
-      '🌸', '🌺', '🌻', '🌈', '☀️', '🌙', '⚡', '❄️', '🍀', '🌊',
-      '🐶', '🐱', '🐼', '🦄', '🐝', '🦋', '🐾', '🐦', '🐟', '🦁',
-      '🌵', '🌴', '🍁', '🌹', '⭐', '🌟', '💫', '☁️',
-    ],
-    'Food': [
-      '🍕', '🍔', '🍰', '🎂', '☕', '🍦', '🍩', '🍓', '🍉', '🥑',
-      '🍎', '🍇', '🍒', '🍫', '🍿', '🌮', '🍟', '🍪',
-    ],
-    'Objects': [
-      '📷', '🎮', '🎵', '🎨', '📚', '✈️', '🚀', '⚽', '🎯', '💡',
-      '🎉', '🎊', '🎈', '🎁', '🏆', '🔥', '✨', '💰', '⏰', '📱',
-    ],
-  };
 
   static const List<IconData> _stickerIcons = [
     Icons.star, Icons.favorite, Icons.brightness_5, Icons.celebration,
@@ -51,35 +15,6 @@ class _EmojiStickerPickerState extends State<EmojiStickerPicker> with SingleTick
     Icons.emoji_emotions, Icons.mood, Icons.thumb_up, Icons.diamond,
     Icons.local_fire_department, Icons.bolt, Icons.anchor, Icons.spa,
   ];
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: _emojiCategories.length + 1, vsync: this);
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  Widget _buildEmojiGrid(List<String> emojis) {
-    return GridView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 8,
-        mainAxisSpacing: 2,
-        crossAxisSpacing: 2,
-      ),
-      itemCount: emojis.length,
-      itemBuilder: (ctx, idx) => InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: () => widget.onEmojiPicked(emojis[idx]),
-        child: Center(child: Text(emojis[idx], style: const TextStyle(fontSize: 24))),
-      ),
-    );
-  }
 
   Widget _buildStickerGrid() {
     return GridView.builder(
@@ -92,7 +27,7 @@ class _EmojiStickerPickerState extends State<EmojiStickerPicker> with SingleTick
       itemCount: _stickerIcons.length,
       itemBuilder: (ctx, idx) => InkWell(
         borderRadius: BorderRadius.circular(6),
-        onTap: () => widget.onStickerPicked(_stickerIcons[idx]),
+        onTap: () => onStickerPicked(_stickerIcons[idx]),
         child: Center(child: Icon(_stickerIcons[idx], color: Colors.amberAccent, size: 22)),
       ),
     );
@@ -100,7 +35,6 @@ class _EmojiStickerPickerState extends State<EmojiStickerPicker> with SingleTick
 
   @override
   Widget build(BuildContext context) {
-    final categoryNames = _emojiCategories.keys.toList();
     return Container(
       decoration: BoxDecoration(
         color: Colors.black,
@@ -108,29 +42,17 @@ class _EmojiStickerPickerState extends State<EmojiStickerPicker> with SingleTick
       ),
       child: Column(
         children: [
-          TabBar(
-            controller: _tabController,
-            isScrollable: true,
-            labelColor: Colors.amberAccent,
-            unselectedLabelColor: Colors.white54,
-            indicatorColor: Colors.amberAccent,
-            tabs: [
-              ...categoryNames.map((name) => Tab(text: name)),
-              const Tab(icon: Icon(Icons.emoji_emotions_outlined), text: 'Stickers'),
-            ],
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8.0),
+            child: Text('Stickers', style: TextStyle(color: Colors.amberAccent, fontWeight: FontWeight.bold)),
           ),
           SizedBox(
             height: 190,
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                ...categoryNames.map((name) => _buildEmojiGrid(_emojiCategories[name]!)),
-                _buildStickerGrid(),
-              ],
-            ),
+            child: _buildStickerGrid(),
           ),
         ],
       ),
     );
   }
 }
+

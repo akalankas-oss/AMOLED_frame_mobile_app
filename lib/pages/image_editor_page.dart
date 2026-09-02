@@ -877,7 +877,6 @@ class _ImageEditorPageState extends State<ImageEditorPage>
 
                               // Sticker / emoji picker
                               EmojiStickerPicker(
-                                onEmojiPicked: _addEmojiItem,
                                 onStickerPicked: _addStickerItem,
                               ),
                             ],
