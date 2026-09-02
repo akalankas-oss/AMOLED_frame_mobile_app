@@ -221,18 +221,6 @@ class EditorStylePanel extends StatelessWidget {
           },
         ),
         const SizedBox(height: 8),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red.shade800,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: onDelete,
-            icon: const Icon(Icons.delete),
-            label: const Text('Delete Selected Item'),
-          ),
-        ),
         const Divider(color: Colors.white24),
       ],
     );
