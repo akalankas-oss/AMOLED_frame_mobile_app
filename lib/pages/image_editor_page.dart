@@ -11,7 +11,7 @@ import '../models/editor_item.dart';
 import '../pages/camera_capture_page.dart';
 import '../widgets/color_swatch_picker.dart';
 import '../widgets/editor_style_panel.dart';
-import '../widgets/emoji_sticker_picker.dart';
+
 import '../widgets/neumorphic_components.dart';
 
 /// Unified "Create Image" design studio.
@@ -196,7 +196,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
 
   // ── Item management ──────────────────────────────────────────────────────
 
-  void _addEmojiItem(String standardText) {
+  void _addTextItem(String standardText) {
     final uniqueId = DateTime.now().microsecondsSinceEpoch.toString();
     final size = _canvasSize ?? const Size(_canvasWidth, _canvasHeight);
     _pushUndo();
@@ -204,28 +204,12 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       _placedItems.add(EditorItem(
         id: uniqueId,
         content: standardText,
-        isSticker: false,
         offset: Offset(size.width / 2 - 30, size.height / 2 - 20),
       ));
       _selectedIdx = _placedItems.length - 1;
     });
   }
 
-  void _addStickerItem(IconData icon) {
-    final uniqueId = DateTime.now().microsecondsSinceEpoch.toString();
-    final size = _canvasSize ?? const Size(_canvasWidth, _canvasHeight);
-    _pushUndo();
-    setState(() {
-      _placedItems.add(EditorItem(
-        id: uniqueId,
-        content: '',
-        isSticker: true,
-        stickerIcon: icon,
-        offset: Offset(size.width / 2 - 25, size.height / 2 - 25),
-      ));
-      _selectedIdx = _placedItems.length - 1;
-    });
-  }
 
   void _removeItemAt(int idx) {
     _pushUndo();
@@ -276,7 +260,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                 backgroundColor: AppColors.cyanAccent),
             onPressed: () {
               if (controller.text.trim().isNotEmpty) {
-                _addEmojiItem(controller.text.trim());
+                _addTextItem(controller.text.trim());
               }
               Navigator.pop(context);
             },
@@ -367,7 +351,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
     final bool hasPhoto = _bgImageBytes != null;
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: AppColors.surface,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -425,7 +409,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                 child: Center(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: Colors.black,
+                      color: AppColors.surface,
                       border: Border.all(color: Colors.white10, width: 1),
                       borderRadius: BorderRadius.circular(16),
                     ),
@@ -597,10 +581,8 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                                               Container(
                                                 padding:
                                                     const EdgeInsets.all(12),
-                                                constraints: BoxConstraints(
-                                                  maxWidth: item.isSticker
-                                                      ? double.infinity
-                                                      : _canvasWidth - 40,
+                                                constraints: const BoxConstraints(
+                                                  maxWidth: _canvasWidth - 40,
                                                 ),
                                                 decoration: BoxDecoration(
                                                   border: Border.all(
@@ -612,57 +594,31 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                                                   borderRadius:
                                                       BorderRadius.circular(12),
                                                 ),
-                                                child: item.isSticker
-                                                    ? Container(
-                                                        padding:
-                                                            const EdgeInsets
-                                                                .all(8),
-                                                        decoration:
-                                                            BoxDecoration(
-                                                          color: item.color,
-                                                          shape:
-                                                              BoxShape.circle,
-                                                        ),
-                                                        child: Icon(
-                                                            item.stickerIcon,
-                                                            size: 36,
-                                                            color:
-                                                                Colors.white),
-                                                      )
-                                                    : Text(
-                                                        item.content,
-                                                        textAlign:
-                                                            TextAlign.center,
-                                                        softWrap: true,
-                                                        style: TextStyle(
-                                                          fontSize: item
-                                                              .fontSize,
-                                                          fontFamily: item
-                                                              .fontFamily,
-                                                          color: item.color,
-                                                          fontWeight: item.bold
-                                                              ? FontWeight.bold
-                                                              : FontWeight
-                                                                  .normal,
-                                                          fontStyle: item.italic
-                                                              ? FontStyle.italic
-                                                              : FontStyle
-                                                                  .normal,
-                                                          letterSpacing: item
-                                                              .letterSpacing,
-                                                          decoration:
-                                                              TextDecoration
-                                                                  .combine([
-                                                            if (item.underline)
-                                                              TextDecoration
-                                                                  .underline,
-                                                            if (item
-                                                                .strikethrough)
-                                                              TextDecoration
-                                                                  .lineThrough,
-                                                          ]),
-                                                        ),
-                                                      ),
+                                                child: Text(
+                                                  item.content,
+                                                  textAlign: TextAlign.center,
+                                                  softWrap: true,
+                                                  style: TextStyle(
+                                                    fontSize: item.fontSize,
+                                                    fontFamily: item.fontFamily,
+                                                    color: item.color,
+                                                    fontWeight: item.bold
+                                                        ? FontWeight.bold
+                                                        : FontWeight.normal,
+                                                    fontStyle: item.italic
+                                                        ? FontStyle.italic
+                                                        : FontStyle.normal,
+                                                    letterSpacing:
+                                                        item.letterSpacing,
+                                                    decoration:
+                                                        TextDecoration.combine([
+                                                      if (item.underline)
+                                                        TextDecoration.underline,
+                                                      if (item.strikethrough)
+                                                        TextDecoration.lineThrough,
+                                                    ]),
+                                                  ),
+                                                ),
                                               ),
                                               if (isFocused && !_isSaving)
                                                 Positioned(
@@ -705,183 +661,94 @@ class _ImageEditorPageState extends State<ImageEditorPage>
               ),
 
               // ── Bottom Panel ─────────────────────────────────────────────
-              Expanded(
-                flex: 3,
-                child: Opacity(
-                  opacity: _isSaving ? 0.0 : 1.0,
-                  child: IgnorePointer(
-                    ignoring: _isSaving,
-                    child: Padding(
+              Opacity(
+                opacity: _isSaving ? 0.0 : 1.0,
+                child: IgnorePointer(
+                  ignoring: _isSaving,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16.0, vertical: 4.0),
+                    child: NeumorphicCard(
+                      borderRadius: 24,
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 16.0, vertical: 8.0),
-                      child: NeumorphicCard(
-                        borderRadius: 24,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 12),
-                        child: SingleChildScrollView(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
+                          horizontal: 16, vertical: 12),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Item style panel (visible when an item is selected)
+                          if (activeItem != null) ...[
+                            EditorStylePanel(
+                              activeItem: activeItem,
+                              onChanged: () => setState(() {}),
+                              onEditStart: _pushUndo,
+                              onDelete: _removeActiveItem,
+                            ),
+                          ],
+                          // Background colour row
+                          Row(
                             children: [
-                              SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: Row(
-                                  children: [
-                                    if (hasPhoto)
-                                      Padding(
-                                        padding: const EdgeInsets.only(right: 8.0),
-                                        child: NeumorphicIconButton(
-                                          icon: Icon(
-                                            _repositioningBackground ? Icons.check_circle : Icons.crop_rotate,
-                                            color: _repositioningBackground ? Colors.greenAccent : Colors.cyanAccent,
-                                            size: 20,
-                                          ),
-                                          isActive: _repositioningBackground,
-                                          onPressed: _toggleReposition,
-                                          borderRadius: 24,
-                                          padding: const EdgeInsets.all(8.0),
-                                        ),
-                                      ),
-                                    Padding(
-                                      padding: const EdgeInsets.only(right: 8.0),
-                                      child: NeumorphicIconButton(
-                                        icon: Icon(
-                                          hasPhoto ? Icons.image : Icons.add_photo_alternate_outlined,
-                                          color: AppColors.cyanAccent,
-                                          size: 20,
-                                        ),
-                                        onPressed: _pickBackgroundPhoto,
-                                        borderRadius: 24,
-                                        padding: const EdgeInsets.all(8.0),
-                                      ),
-                                    ),
-                                    Padding(
-                                      padding: const EdgeInsets.only(right: 8.0),
-                                      child: NeumorphicIconButton(
-                                        icon: const Icon(Icons.camera_alt_outlined, color: Colors.greenAccent, size: 20),
-                                        onPressed: _openCamera,
-                                        borderRadius: 24,
-                                        padding: const EdgeInsets.all(8.0),
-                                      ),
-                                    ),
-                                    if (hasPhoto)
-                                      Padding(
-                                        padding: const EdgeInsets.only(right: 8.0),
-                                        child: NeumorphicIconButton(
-                                          icon: const Icon(Icons.hide_image_outlined, color: AppColors.pinkAccent, size: 20),
-                                          onPressed: _removeBackgroundPhoto,
-                                          borderRadius: 24,
-                                          padding: const EdgeInsets.all(8.0),
-                                        ),
-                                      ),
-                                    Padding(
-                                      padding: const EdgeInsets.only(right: 8.0),
-                                      child: NeumorphicIconButton(
-                                        icon: const Icon(Icons.text_fields, color: Colors.amberAccent, size: 20),
-                                        onPressed: _openCustomTextInput,
-                                        borderRadius: 24,
-                                        padding: const EdgeInsets.all(8.0),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-
-                              // Item style panel (visible when an item is selected)
-                              if (activeItem != null) ...[
-                                EditorStylePanel(
-                                  activeItem: activeItem,
-                                  onChanged: () => setState(() {}),
-                                  onEditStart: _pushUndo,
-                                  onDelete: _removeActiveItem,
-                                ),
-                              ],
-
-                              // Background colour row
-                              Row(
-                                children: [
-                                  const Text('Background:',
-                                      style: TextStyle(
-                                          color: Colors.white70, fontSize: 12)),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: SizedBox(
-                                      height: 30,
-                                      child: ListView.builder(
-                                        scrollDirection: Axis.horizontal,
-                                        itemCount: ColorSwatchPicker
-                                            .colorPalette.length,
-                                        itemBuilder: (ctx, idx) {
-                                          final c = ColorSwatchPicker
-                                              .colorPalette[idx];
-                                          final isSelected = c == _bgColor;
-                                          return GestureDetector(
-                                            onTap: () =>
-                                                _setBackgroundColor(c),
-                                            child: Container(
-                                              width: 26,
-                                              height: 26,
-                                              margin:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 3),
-                                              decoration: BoxDecoration(
-                                                color: c,
-                                                shape: BoxShape.circle,
-                                                border: Border.all(
-                                                  color: isSelected
-                                                      ? Colors.cyanAccent
-                                                      : Colors.white24,
-                                                  width: isSelected ? 2 : 1,
-                                                ),
-                                              ),
+                              const Text('Background:',
+                                  style: TextStyle(
+                                      color: Colors.white70, fontSize: 12)),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: SizedBox(
+                                  height: 30,
+                                  child: ListView.builder(
+                                    scrollDirection: Axis.horizontal,
+                                    itemCount: ColorSwatchPicker.colorPalette.length,
+                                    itemBuilder: (ctx, idx) {
+                                      final c = ColorSwatchPicker.colorPalette[idx];
+                                      final isSelected = c == _bgColor;
+                                      return GestureDetector(
+                                        onTap: () => _setBackgroundColor(c),
+                                        child: Container(
+                                          width: 26,
+                                          height: 26,
+                                          margin: const EdgeInsets.symmetric(horizontal: 3),
+                                          decoration: BoxDecoration(
+                                            color: c,
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color: isSelected ? Colors.cyanAccent : Colors.white24,
+                                              width: isSelected ? 2 : 1,
                                             ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  // Custom colour picker
-                                  GestureDetector(
-                                    onTap: () =>
-                                        ColorSwatchPicker.showCustomColorPicker(
-                                            context,
-                                            _bgColor,
-                                            _setBackgroundColor),
-                                    child: Container(
-                                      width: 30,
-                                      height: 30,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                            color: Colors.white24, width: 1.5),
-                                        gradient: const SweepGradient(
-                                          colors: [
-                                            Colors.red,
-                                            Colors.yellow,
-                                            Colors.green,
-                                            Colors.cyan,
-                                            Colors.blue,
-                                            Colors.purple,
-                                            Colors.red
-                                          ],
+                                          ),
                                         ),
-                                      ),
-                                      child: const Icon(Icons.add,
-                                          size: 16, color: Colors.white),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              // Custom colour picker
+                              GestureDetector(
+                                onTap: () => ColorSwatchPicker.showCustomColorPicker(
+                                    context, _bgColor, _setBackgroundColor),
+                                child: Container(
+                                  width: 30,
+                                  height: 30,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.white24, width: 1.5),
+                                    gradient: const SweepGradient(
+                                      colors: [
+                                        Colors.red,
+                                        Colors.yellow,
+                                        Colors.green,
+                                        Colors.cyan,
+                                        Colors.blue,
+                                        Colors.purple,
+                                        Colors.red,
+                                      ],
                                     ),
                                   ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-
-                              // Sticker / emoji picker
-                              EmojiStickerPicker(
-                                onStickerPicked: _addStickerItem,
+                                  child: const Icon(Icons.add, size: 16, color: Colors.white),
+                                ),
                               ),
                             ],
                           ),
-                        ),
+                        ],
                       ),
                     ),
                   ),
@@ -974,6 +841,62 @@ class _ImageEditorPageState extends State<ImageEditorPage>
               ),
             ),
         ],
+      ),
+      bottomNavigationBar: Opacity(
+        opacity: _isSaving ? 0.0 : 1.0,
+        child: IgnorePointer(
+          ignoring: _isSaving,
+          child: Container(
+            color: AppColors.surface,
+            padding: const EdgeInsets.only(left: 16, right: 16, bottom: 24, top: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                if (hasPhoto)
+                  NeumorphicIconButton(
+                    icon: Icon(
+                      _repositioningBackground ? Icons.check_circle : Icons.crop_rotate,
+                      color: _repositioningBackground ? Colors.greenAccent : Colors.cyanAccent,
+                      size: 26,
+                    ),
+                    isActive: _repositioningBackground,
+                    onPressed: _toggleReposition,
+                    borderRadius: 28,
+                    padding: const EdgeInsets.all(12.0),
+                  ),
+                NeumorphicIconButton(
+                  icon: Icon(
+                    hasPhoto ? Icons.image : Icons.add_photo_alternate_outlined,
+                    color: AppColors.cyanAccent,
+                    size: 26,
+                  ),
+                  onPressed: _pickBackgroundPhoto,
+                  borderRadius: 28,
+                  padding: const EdgeInsets.all(12.0),
+                ),
+                NeumorphicIconButton(
+                  icon: const Icon(Icons.camera_alt_outlined, color: Colors.greenAccent, size: 26),
+                  onPressed: _openCamera,
+                  borderRadius: 28,
+                  padding: const EdgeInsets.all(12.0),
+                ),
+                if (hasPhoto)
+                  NeumorphicIconButton(
+                    icon: const Icon(Icons.hide_image_outlined, color: AppColors.pinkAccent, size: 26),
+                    onPressed: _removeBackgroundPhoto,
+                    borderRadius: 28,
+                    padding: const EdgeInsets.all(12.0),
+                  ),
+                NeumorphicIconButton(
+                  icon: const Icon(Icons.text_fields, color: Colors.amberAccent, size: 26),
+                  onPressed: _openCustomTextInput,
+                  borderRadius: 28,
+                  padding: const EdgeInsets.all(12.0),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

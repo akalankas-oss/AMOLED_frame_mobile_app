@@ -4,8 +4,6 @@ class EditorItem {
   EditorItem({
     required this.id,
     required this.content,
-    required this.isSticker,
-    this.stickerIcon,
     this.offset = const Offset(50, 50),
     this.scale = 1.0,
     this.rotation = 0.0,
@@ -17,18 +15,14 @@ class EditorItem {
     this.underline = false,
     this.strikethrough = false,
     this.letterSpacing = 0,
-  }) : color = color ?? (isSticker ? Colors.amber : Colors.white);
+  }) : color = color ?? Colors.white;
 
   final String id;
   final String content;
-  final bool isSticker;
-  final IconData? stickerIcon;
   Offset offset;
   double scale;
   double rotation; // radians
-  // Text color (for emoji/text items) or background color (for stickers).
   Color color;
-  // Text-only styling. Ignored for stickers.
   double fontSize;
   String? fontFamily; // null = default
   bool bold;
@@ -41,8 +35,6 @@ class EditorItem {
     return EditorItem(
       id: id,
       content: content,
-      isSticker: isSticker,
-      stickerIcon: stickerIcon,
       offset: offset,
       scale: scale,
       rotation: rotation,

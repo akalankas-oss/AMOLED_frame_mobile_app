@@ -254,7 +254,7 @@ class _FramePageState extends State<FramePage> {
                 icon: Icons.add_photo_alternate_outlined,
                 iconColor: AppColors.pinkAccent,
                 title: 'Create Image',
-                subtitle: 'Design with colors, text, photos & stickers',
+                subtitle: 'Design with colors, text, and photos',
                 onTap: () {
                   Navigator.pop(ctx);
                   _openCreateImageStudio();

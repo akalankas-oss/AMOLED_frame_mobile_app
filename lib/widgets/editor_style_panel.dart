@@ -101,7 +101,6 @@ class EditorStylePanel extends StatelessWidget {
             ),
           ],
         ),
-        if (!activeItem.isSticker) ...[
           Row(
             children: [
               const Icon(Icons.format_size, size: 18, color: Colors.white),
@@ -206,7 +205,6 @@ class EditorStylePanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-        ],
         const Align(
           alignment: Alignment.centerLeft,
           child: Text('COLOR', style: TextStyle(color: Colors.white54, fontWeight: FontWeight.bold, fontSize: 11, letterSpacing: 1)),
