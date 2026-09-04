@@ -11,8 +11,35 @@ import '../models/editor_item.dart';
 import '../pages/camera_capture_page.dart';
 import '../widgets/color_swatch_picker.dart';
 import '../widgets/editor_style_panel.dart';
-
 import '../widgets/neumorphic_components.dart';
+
+// ── Enums ─────────────────────────────────────────────────────────────────────
+
+enum ActiveSubSection { none, icon, stickers, border, bgReposition }
+
+// ── Border Options ─────────────────────────────────────────────────────────────
+
+enum BorderType { none, single, double, triple }
+
+
+
+// ── Preset Icons & Stickers ───────────────────────────────────────────────────
+
+const List<String> _emojiPresets = [
+  '⭐', '❤️', '🔥', '😊', '👍', '⚡',
+  '🎵', '🔔', '🚀', '🏆', '💡', '🛡️',
+  '😎', '🎉', '💎', '🌟', '🦋', '🌈',
+  '🍀', '🎯', '⚽', '🎮', '🌙', '☀️',
+];
+
+const List<String> _stickerPresets = [
+  '★ STAR ★', '❯❯ HOT', 'NEW ✦', '◈ VIP ◈',
+  '» LIVE «', '✦ COOL ✦', '◉ PRO', '⊛ EPIC',
+  '▶ GO', '✔ WIN', '✗ FAIL', '⌘ CMD',
+  '⚑ FLAG', '♛ KING', '⌂ HOME', '☎ CALL',
+];
+
+// ── Main Widget ───────────────────────────────────────────────────────────────
 
 /// Unified "Create Image" design studio.
 ///
@@ -50,11 +77,18 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   double? _bgGestureStartScale;
   double? _bgGestureStartRotation;
 
-  // Solid-colour background (always present; shown when no photo is loaded).
+  // Solid-colour background (always present; shown when no photo is loaded)
   Color _bgColor = Colors.black;
 
-  // Optional photo layer on top of the solid colour.
+  // Optional photo layer on top of the solid colour
   Uint8List? _bgImageBytes;
+
+  // Active sub-section in the dynamic area
+  ActiveSubSection _activeSubSection = ActiveSubSection.none;
+
+  // Selected border style
+  BorderType _selectedBorderType = BorderType.none;
+  Color _selectedBorderColor = Colors.white;
 
   // ── Undo Stack ────────────────────────────────────────────────────────────
 
@@ -69,6 +103,8 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       bgOffset: _bgOffset,
       bgScale: _bgScale,
       bgRotation: _bgRotation,
+      borderType: _selectedBorderType,
+      borderColor: _selectedBorderColor,
     ));
     if (_undoStack.length > _maxUndoSteps) _undoStack.removeAt(0);
   }
@@ -85,8 +121,11 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       _bgOffset = snap.bgOffset;
       _bgScale = snap.bgScale;
       _bgRotation = snap.bgRotation;
+      _selectedBorderType = snap.borderType;
+      _selectedBorderColor = snap.borderColor;
       _selectedIdx = null;
       _repositioningBackground = false;
+      _activeSubSection = ActiveSubSection.none;
     });
   }
 
@@ -104,6 +143,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       _bgOffset = Offset.zero;
       _bgScale = 1.0;
       _bgRotation = 0.0;
+      _activeSubSection = ActiveSubSection.none;
     });
   }
 
@@ -114,6 +154,10 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       _bgOffset = Offset.zero;
       _bgScale = 1.0;
       _bgRotation = 0.0;
+      _repositioningBackground = false;
+      if (_activeSubSection == ActiveSubSection.bgReposition) {
+        _activeSubSection = ActiveSubSection.none;
+      }
     });
   }
 
@@ -130,6 +174,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       _bgOffset = Offset.zero;
       _bgScale = 1.0;
       _bgRotation = 0.0;
+      _activeSubSection = ActiveSubSection.none;
     });
   }
 
@@ -156,7 +201,12 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   void _toggleReposition() {
     setState(() {
       _repositioningBackground = !_repositioningBackground;
-      if (_repositioningBackground) _selectedIdx = null;
+      if (_repositioningBackground) {
+        _selectedIdx = null;
+        _activeSubSection = ActiveSubSection.bgReposition;
+      } else {
+        _activeSubSection = ActiveSubSection.none;
+      }
     });
   }
 
@@ -184,7 +234,40 @@ class _ImageEditorPageState extends State<ImageEditorPage>
     setState(() => _bgColor = color);
   }
 
-  // ── Lifecycle ────────────────────────────────────────────────────────────
+  // ── Canvas border ─────────────────────────────────────────────────────────
+
+  void _setCanvasBorderType(BorderType type) {
+    if (_selectedBorderType == type) return;
+    _pushUndo();
+    setState(() => _selectedBorderType = type);
+  }
+
+  void _setCanvasBorderColor(Color color) {
+    if (_selectedBorderColor == color) return;
+    _pushUndo();
+    setState(() => _selectedBorderColor = color);
+  }
+
+  // ── Sub-section toggle ────────────────────────────────────────────────────
+
+  void _toggleSubSection(ActiveSubSection section) {
+    setState(() {
+      if (_activeSubSection == section) {
+        _activeSubSection = ActiveSubSection.none;
+        if (section == ActiveSubSection.bgReposition) {
+          _repositioningBackground = false;
+        }
+      } else {
+        _activeSubSection = section;
+        _selectedIdx = null;
+        if (section != ActiveSubSection.bgReposition) {
+          _repositioningBackground = false;
+        }
+      }
+    });
+  }
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   @override
   void initState() {
@@ -194,22 +277,56 @@ class _ImageEditorPageState extends State<ImageEditorPage>
     }
   }
 
-  // ── Item management ──────────────────────────────────────────────────────
+  // ── Item management ───────────────────────────────────────────────────────
 
-  void _addTextItem(String standardText) {
+  void _addTextItem(String text) {
     final uniqueId = DateTime.now().microsecondsSinceEpoch.toString();
     final size = _canvasSize ?? const Size(_canvasWidth, _canvasHeight);
     _pushUndo();
     setState(() {
       _placedItems.add(EditorItem(
         id: uniqueId,
-        content: standardText,
+        content: text,
         offset: Offset(size.width / 2 - 30, size.height / 2 - 20),
       ));
       _selectedIdx = _placedItems.length - 1;
+      _activeSubSection = ActiveSubSection.none;
     });
   }
 
+  void _addIconItem(String emoji) {
+    final uniqueId = DateTime.now().microsecondsSinceEpoch.toString();
+    final size = _canvasSize ?? const Size(_canvasWidth, _canvasHeight);
+    _pushUndo();
+    setState(() {
+      _placedItems.add(EditorItem(
+        id: uniqueId,
+        content: emoji,
+        offset: Offset(size.width / 2 - 20, size.height / 2 - 20),
+        fontSize: 40,
+      ));
+      _selectedIdx = _placedItems.length - 1;
+      _activeSubSection = ActiveSubSection.none;
+    });
+  }
+
+  void _addStickerItem(String sticker) {
+    final uniqueId = DateTime.now().microsecondsSinceEpoch.toString();
+    final size = _canvasSize ?? const Size(_canvasWidth, _canvasHeight);
+    _pushUndo();
+    setState(() {
+      _placedItems.add(EditorItem(
+        id: uniqueId,
+        content: sticker,
+        offset: Offset(size.width / 2 - 40, size.height / 2 - 20),
+        fontSize: 28,
+        color: AppColors.cyanAccent,
+        bold: true,
+      ));
+      _selectedIdx = _placedItems.length - 1;
+      _activeSubSection = ActiveSubSection.none;
+    });
+  }
 
   void _removeItemAt(int idx) {
     _pushUndo();
@@ -272,13 +389,14 @@ class _ImageEditorPageState extends State<ImageEditorPage>
     );
   }
 
-  // ── Export ───────────────────────────────────────────────────────────────
+  // ── Export ────────────────────────────────────────────────────────────────
 
   Future<void> _exportCanvas() async {
     try {
       setState(() {
         _selectedIdx = null;
         _repositioningBackground = false;
+        _activeSubSection = ActiveSubSection.none;
         _isSaving = true;
       });
 
@@ -338,7 +456,482 @@ class _ImageEditorPageState extends State<ImageEditorPage>
     }
   }
 
-  // ── Build ────────────────────────────────────────────────────────────────
+  // ── Sub-section Widgets ───────────────────────────────────────────────────
+
+  /// Builds the icon/emoji picker section
+  Widget _buildIconSection() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('Icons & Emojis',
+                style: TextStyle(
+                    color: AppColors.cyanAccent,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13)),
+            GestureDetector(
+              onTap: () => setState(() => _activeSubSection = ActiveSubSection.none),
+              child: const Icon(Icons.close, color: Colors.white38, size: 18),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 52,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: _emojiPresets.length,
+            itemBuilder: (ctx, idx) {
+              return GestureDetector(
+                onTap: () => _addIconItem(_emojiPresets[idx]),
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  margin: const EdgeInsets.only(right: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceElevatedLighter,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.white12, width: 1),
+                  ),
+                  child: Center(
+                    child: Text(
+                      _emojiPresets[idx],
+                      style: const TextStyle(fontSize: 24),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Builds the sticker picker section
+  Widget _buildStickersSection() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('Stickers',
+                style: TextStyle(
+                    color: AppColors.amberAccent,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13)),
+            GestureDetector(
+              onTap: () => setState(() => _activeSubSection = ActiveSubSection.none),
+              child: const Icon(Icons.close, color: Colors.white38, size: 18),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 52,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: _stickerPresets.length,
+            itemBuilder: (ctx, idx) {
+              return GestureDetector(
+                onTap: () => _addStickerItem(_stickerPresets[idx]),
+                child: Container(
+                  height: 48,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  margin: const EdgeInsets.only(right: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceElevatedLighter,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.amberAccent.withValues(alpha: 0.4), width: 1),
+                  ),
+                  child: Center(
+                    child: Text(
+                      _stickerPresets[idx],
+                      style: const TextStyle(
+                          color: AppColors.amberAccent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Builds the actual border overlay widget for the canvas
+  Widget _buildBorderOverlay() {
+    if (_selectedBorderType == BorderType.single) {
+      return Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: _selectedBorderColor, width: 3.0),
+          borderRadius: BorderRadius.circular(16),
+        ),
+      );
+    } else if (_selectedBorderType == BorderType.double) {
+      const double w = 2.0;
+      return Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: _selectedBorderColor, width: w),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        padding: const EdgeInsets.all(w + 2),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: _selectedBorderColor, width: w),
+            borderRadius: BorderRadius.circular(16 - w - 2),
+          ),
+        ),
+      );
+    } else if (_selectedBorderType == BorderType.triple) {
+      const double w = 1.5;
+      return Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: _selectedBorderColor, width: w),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        padding: const EdgeInsets.all(w + 1.5),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: _selectedBorderColor, width: w),
+            borderRadius: BorderRadius.circular(16 - w - 1.5),
+          ),
+          padding: const EdgeInsets.all(w + 1.5),
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: _selectedBorderColor, width: w),
+              borderRadius: BorderRadius.circular(16 - (w + 1.5) * 2),
+            ),
+          ),
+        ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  /// Builds the border picker section
+  Widget _buildBorderSection() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('Canvas Border',
+                style: TextStyle(
+                    color: AppColors.purpleAccent,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13)),
+            GestureDetector(
+              onTap: () => setState(() => _activeSubSection = ActiveSubSection.none),
+              child: const Icon(Icons.close, color: Colors.white38, size: 18),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _borderTypeButton(BorderType.none, 'None', Icons.border_clear),
+            _borderTypeButton(BorderType.single, 'Single', Icons.crop_din),
+            _borderTypeButton(BorderType.double, 'Double', Icons.filter_none),
+            _borderTypeButton(BorderType.triple, 'Triple', Icons.layers_outlined),
+          ],
+        ),
+        if (_selectedBorderType != BorderType.none) ...[
+          const SizedBox(height: 12),
+          const Text('Border Color', style: TextStyle(color: Colors.white54, fontSize: 11)),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 28,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: ColorSwatchPicker.colorPalette.length,
+                    itemBuilder: (ctx, idx) {
+                      final c = ColorSwatchPicker.colorPalette[idx];
+                      final isSelected = c == _selectedBorderColor;
+                      return GestureDetector(
+                        onTap: () => _setCanvasBorderColor(c),
+                        child: Container(
+                          width: 24,
+                          height: 24,
+                          margin: const EdgeInsets.symmetric(horizontal: 3),
+                          decoration: BoxDecoration(
+                            color: c,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isSelected ? Colors.white : Colors.white24,
+                              width: isSelected ? 2 : 1,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              GestureDetector(
+                onTap: () => ColorSwatchPicker.showCustomColorPicker(
+                    context, _selectedBorderColor, _setCanvasBorderColor),
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white24, width: 1.5),
+                    gradient: const SweepGradient(
+                      colors: [Colors.red, Colors.yellow, Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.red],
+                    ),
+                  ),
+                  child: const Icon(Icons.add, size: 14, color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        ]
+      ],
+    );
+  }
+
+  Widget _borderTypeButton(BorderType type, String label, IconData icon) {
+    final isSelected = _selectedBorderType == type;
+    final color = isSelected ? AppColors.purpleAccent : Colors.white70;
+    return GestureDetector(
+      onTap: () => _setCanvasBorderType(type),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.purpleAccent.withValues(alpha: 0.15) : AppColors.surfaceElevatedLighter,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? AppColors.purpleAccent : Colors.white12,
+            width: isSelected ? 1.5 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 20),
+            const SizedBox(height: 4),
+            Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Builds the background reposition controls section
+  Widget _buildBgRepositionSection() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Reposition Photo',
+              style: TextStyle(
+                  color: AppColors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: _resetBackgroundTransform,
+                  icon: const Icon(Icons.restore, color: AppColors.pinkAccent, size: 14),
+                  label: const Text('Reset', style: TextStyle(color: AppColors.pinkAccent, fontSize: 12)),
+                  style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: _toggleReposition,
+                  child: const Icon(Icons.check_circle, color: Colors.greenAccent, size: 20),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _repoButton(Icons.rotate_left, 'Rotate L', () => _quickRotateBackground(-math.pi / 2)),
+            _repoButton(Icons.zoom_out, 'Zoom -', () => _stepZoomBackground(-0.1)),
+            _repoButton(Icons.zoom_in, 'Zoom +', () => _stepZoomBackground(0.1)),
+            _repoButton(Icons.rotate_right, 'Rotate R', () => _quickRotateBackground(math.pi / 2)),
+            _repoButton(Icons.hide_image_outlined, 'Remove', _removeBackgroundPhoto,
+                iconColor: AppColors.pinkAccent),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _repoButton(IconData icon, String tooltip, VoidCallback onTap,
+      {Color iconColor = Colors.white70}) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceElevatedLighter,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white12, width: 1),
+          ),
+          child: Icon(icon, color: iconColor, size: 20),
+        ),
+      ),
+    );
+  }
+
+  // ── Dynamic Section Dispatcher ────────────────────────────────────────────
+
+  Widget? _buildDynamicSection(EditorItem? activeItem, bool hasPhoto) {
+    // Priority: item style panel > sub-sections
+    if (activeItem != null) {
+      return EditorStylePanel(
+        activeItem: activeItem,
+        onChanged: () => setState(() {}),
+        onEditStart: _pushUndo,
+        onDelete: _removeActiveItem,
+      );
+    }
+
+    switch (_activeSubSection) {
+      case ActiveSubSection.icon:
+        return _buildIconSection();
+      case ActiveSubSection.stickers:
+        return _buildStickersSection();
+      case ActiveSubSection.border:
+        return _buildBorderSection();
+      case ActiveSubSection.bgReposition:
+        if (hasPhoto) return _buildBgRepositionSection();
+        return null;
+      case ActiveSubSection.none:
+        return null;
+    }
+  }
+
+  // ── 6-Button Grid ─────────────────────────────────────────────────────────
+
+  Widget _buildButtonGrid(bool hasPhoto) {
+    return GridView.count(
+      crossAxisCount: 3,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisSpacing: 8,
+      mainAxisSpacing: 8,
+      childAspectRatio: 2.5,
+      children: [
+        _gridButton(
+          icon: Icons.photo_library_outlined,
+          label: 'Picture',
+          color: AppColors.cyanAccent,
+          onTap: _pickBackgroundPhoto,
+        ),
+        _gridButton(
+          icon: Icons.camera_alt_outlined,
+          label: 'Camera',
+          color: AppColors.greenAccent,
+          onTap: _openCamera,
+        ),
+        _gridButton(
+          icon: Icons.text_fields,
+          label: 'Text',
+          color: AppColors.amberAccent,
+          onTap: _openCustomTextInput,
+        ),
+        _gridButton(
+          icon: Icons.emoji_emotions_outlined,
+          label: 'Icon',
+          color: AppColors.cyanAccent,
+          isActive: _activeSubSection == ActiveSubSection.icon,
+          onTap: () => _toggleSubSection(ActiveSubSection.icon),
+        ),
+        _gridButton(
+          icon: Icons.auto_awesome_outlined,
+          label: 'Stickers',
+          color: AppColors.amberAccent,
+          isActive: _activeSubSection == ActiveSubSection.stickers,
+          onTap: () => _toggleSubSection(ActiveSubSection.stickers),
+        ),
+        _gridButton(
+          icon: Icons.border_style_outlined,
+          label: 'Border',
+          color: AppColors.purpleAccent,
+          isActive: _activeSubSection == ActiveSubSection.border,
+          onTap: () => _toggleSubSection(ActiveSubSection.border),
+        ),
+      ],
+    );
+  }
+
+  Widget _gridButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+    bool isActive = false,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        decoration: BoxDecoration(
+          color: isActive
+              ? color.withValues(alpha: 0.15)
+              : AppColors.surfaceElevated,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isActive ? color : Colors.white.withValues(alpha: 0.08),
+            width: isActive ? 1.5 : 1.0,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.5),
+              offset: const Offset(2, 2),
+              blurRadius: 6,
+            ),
+            BoxShadow(
+              color: Colors.white.withValues(alpha: 0.03),
+              offset: const Offset(-1, -1),
+              blurRadius: 4,
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: isActive ? color : color.withValues(alpha: 0.7), size: 18),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                color: isActive ? color : Colors.white70,
+                fontSize: 12,
+                fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -349,6 +942,9 @@ class _ImageEditorPageState extends State<ImageEditorPage>
 
     final bool bgGesturesEnabled = _repositioningBackground && !_isSaving;
     final bool hasPhoto = _bgImageBytes != null;
+
+    final dynamicSectionWidget = _buildDynamicSection(activeItem, hasPhoto);
+    final bool showDynamic = dynamicSectionWidget != null;
 
     return Scaffold(
       backgroundColor: AppColors.surface,
@@ -381,6 +977,24 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                   padding: const EdgeInsets.all(8.0),
                 ),
               ),
+            // Reposition button (only when photo loaded)
+            if (hasPhoto)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+                child: NeumorphicIconButton(
+                  icon: Icon(
+                    Icons.crop_rotate,
+                    color: _repositioningBackground
+                        ? Colors.greenAccent
+                        : Colors.white54,
+                    size: 20,
+                  ),
+                  isActive: _repositioningBackground,
+                  onPressed: _toggleReposition,
+                  borderRadius: 24,
+                  padding: const EdgeInsets.all(8.0),
+                ),
+              ),
             // Save
             Padding(
               padding:
@@ -403,256 +1017,279 @@ class _ImageEditorPageState extends State<ImageEditorPage>
         children: [
           Column(
             children: [
-              // ── Canvas Area ──────────────────────────────────────────────
+              // ── Canvas / Display Panel ─────────────────────────────────────
               Expanded(
-                flex: 4,
-                child: Center(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      border: Border.all(color: Colors.white10, width: 1),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: AspectRatio(
-                      aspectRatio: _canvasWidth / _canvasHeight,
+                flex: 5,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 8.0, left: 12, right: 12),
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: _selectedBorderType == BorderType.none
+                            ? null
+                            : [
+                                BoxShadow(
+                                  color: _selectedBorderColor.withValues(alpha: 0.35),
+                                  blurRadius: 12,
+                                  spreadRadius: 1,
+                                ),
+                              ],
+                      ),
                       child: RepaintBoundary(
                         key: _boundaryKey,
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            _canvasSize = constraints.biggest;
-                            return Stack(
-                              key: _stackKey,
-                              clipBehavior: Clip.hardEdge,
-                              children: [
-                                // Solid colour fill (always present)
-                                Positioned.fill(
-                                  child: Container(color: _bgColor),
-                                ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: AspectRatio(
+                            aspectRatio: _canvasWidth / _canvasHeight,
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                _canvasSize = constraints.biggest;
+                                return Stack(
+                                  key: _stackKey,
+                                  clipBehavior: Clip.hardEdge,
+                                  children: [
+                                    // Solid colour fill (always present)
+                                    Positioned.fill(
+                                      child: Container(color: _bgColor),
+                                    ),
 
-                                // Optional photo layer
-                                if (hasPhoto)
-                                  Positioned.fill(
-                                    child: ClipRect(
-                                      child: GestureDetector(
-                                        behavior: HitTestBehavior.opaque,
-                                        onScaleStart: !bgGesturesEnabled
-                                            ? null
-                                            : (details) {
-                                                _pushUndo();
-                                                _bgGestureStartScale = _bgScale;
-                                                _bgGestureStartRotation =
-                                                    _bgRotation;
-                                              },
-                                        onScaleUpdate: !bgGesturesEnabled
-                                            ? null
-                                            : (details) {
-                                                setState(() {
-                                                  _bgScale =
-                                                      (_bgGestureStartScale! *
-                                                              details.scale)
-                                                          .clamp(0.5, 6.0);
-                                                  _bgOffset +=
-                                                      details.focalPointDelta;
-                                                  if (details.pointerCount >
-                                                      1) {
-                                                    _bgRotation =
-                                                        _bgGestureStartRotation! +
-                                                            details.rotation;
-                                                  }
-                                                });
-                                              },
-                                        onTap: bgGesturesEnabled
-                                            ? null
-                                            : () {
-                                                if (!_isSaving) {
-                                                  setState(
-                                                      () => _selectedIdx = null);
-                                                }
-                                              },
-                                        child: Transform.translate(
-                                          offset: _bgOffset,
-                                          child: Transform.rotate(
-                                            angle: _bgRotation,
-                                            child: Transform.scale(
-                                              scale: _bgScale,
-                                              child: Image.memory(
-                                                _bgImageBytes!,
-                                                fit: BoxFit.contain,
+                                    // Optional photo layer
+                                    if (hasPhoto)
+                                      Positioned.fill(
+                                        child: ClipRect(
+                                          child: GestureDetector(
+                                            behavior: HitTestBehavior.opaque,
+                                            onScaleStart: !bgGesturesEnabled
+                                                ? null
+                                                : (details) {
+                                                    _pushUndo();
+                                                    _bgGestureStartScale = _bgScale;
+                                                    _bgGestureStartRotation =
+                                                        _bgRotation;
+                                                  },
+                                            onScaleUpdate: !bgGesturesEnabled
+                                                ? null
+                                                : (details) {
+                                                    setState(() {
+                                                      _bgScale =
+                                                          (_bgGestureStartScale! *
+                                                                  details.scale)
+                                                              .clamp(0.5, 6.0);
+                                                      _bgOffset +=
+                                                          details.focalPointDelta;
+                                                      if (details.pointerCount >
+                                                          1) {
+                                                        _bgRotation =
+                                                            _bgGestureStartRotation! +
+                                                                details.rotation;
+                                                      }
+                                                    });
+                                                  },
+                                            onTap: bgGesturesEnabled
+                                                ? null
+                                                : () {
+                                                    if (!_isSaving) {
+                                                      setState(
+                                                          () => _selectedIdx = null);
+                                                    }
+                                                  },
+                                            child: Transform.translate(
+                                              offset: _bgOffset,
+                                              child: Transform.rotate(
+                                                angle: _bgRotation,
+                                                child: Transform.scale(
+                                                  scale: _bgScale,
+                                                  child: Image.memory(
+                                                    _bgImageBytes!,
+                                                    fit: BoxFit.contain,
+                                                  ),
+                                                ),
                                               ),
                                             ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  ),
 
-                                // Tap-to-deselect on solid-colour canvas
-                                if (!hasPhoto)
-                                  Positioned.fill(
-                                    child: GestureDetector(
-                                      behavior: HitTestBehavior.opaque,
-                                      onTap: () {
-                                        if (!_isSaving) {
-                                          setState(() => _selectedIdx = null);
-                                        }
-                                      },
-                                    ),
-                                  ),
-
-                                // Placed items (text, stickers, emojis)
-                                ...List.generate(_placedItems.length, (index) {
-                                  final item = _placedItems[index];
-                                  final isFocused = _selectedIdx == index;
-                                  final itemGesturesEnabled =
-                                      !_isSaving && !_repositioningBackground;
-
-                                  return Positioned(
-                                    key: ValueKey('item_${item.id}'),
-                                    left: item.offset.dx,
-                                    top: item.offset.dy,
-                                    child: GestureDetector(
-                                      behavior: HitTestBehavior.opaque,
-                                      onTap: !itemGesturesEnabled
-                                          ? null
-                                          : () {
-                                              setState(
-                                                  () => _selectedIdx = index);
-                                            },
-                                      onScaleStart: !itemGesturesEnabled
-                                          ? null
-                                          : (details) {
-                                              _pushUndo();
-                                              final box = _stackKey
-                                                      .currentContext!
-                                                      .findRenderObject()
-                                                  as RenderBox;
-                                              final localPos = box
-                                                  .globalToLocal(
-                                                      details.focalPoint);
-                                              setState(() {
-                                                _selectedIdx = index;
-                                                _dragAnchor =
-                                                    localPos - item.offset;
-                                                _itemStartScale = item.scale;
-                                                _itemStartRotation =
-                                                    item.rotation;
-                                              });
-                                            },
-                                      onScaleUpdate: !itemGesturesEnabled
-                                          ? null
-                                          : (details) {
-                                              final box = _stackKey
-                                                      .currentContext!
-                                                      .findRenderObject()
-                                                  as RenderBox;
-                                              final localPos = box
-                                                  .globalToLocal(
-                                                      details.focalPoint);
-                                              final anchor =
-                                                  _dragAnchor ?? Offset.zero;
-                                              setState(() {
-                                                final newOffset =
-                                                    localPos - anchor;
-                                                item.offset = Offset(
-                                                  newOffset.dx.clamp(-40.0,
-                                                      constraints.maxWidth - 20),
-                                                  newOffset.dy.clamp(-40.0,
-                                                      constraints.maxHeight - 20),
-                                                );
-                                                if (details.pointerCount > 1) {
-                                                  item.scale =
-                                                      (_itemStartScale! *
-                                                              details.scale)
-                                                          .clamp(0.3, 4.0);
-                                                  item.rotation =
-                                                      _itemStartRotation! +
-                                                          details.rotation;
-                                                }
-                                              });
-                                            },
-                                      onScaleEnd: (_) => _dragAnchor = null,
-                                      child: Transform.rotate(
-                                        angle: item.rotation,
-                                        child: Transform.scale(
-                                          scale: item.scale,
-                                          child: Stack(
-                                            clipBehavior: Clip.none,
-                                            children: [
-                                              Container(
-                                                padding:
-                                                    const EdgeInsets.all(12),
-                                                constraints: const BoxConstraints(
-                                                  maxWidth: _canvasWidth - 40,
-                                                ),
-                                                decoration: BoxDecoration(
-                                                  border: Border.all(
-                                                    color: isFocused
-                                                        ? Colors.cyanAccent
-                                                        : Colors.transparent,
-                                                    width: 2,
-                                                  ),
-                                                  borderRadius:
-                                                      BorderRadius.circular(12),
-                                                ),
-                                                child: Text(
-                                                  item.content,
-                                                  textAlign: TextAlign.center,
-                                                  softWrap: true,
-                                                  style: TextStyle(
-                                                    fontSize: item.fontSize,
-                                                    fontFamily: item.fontFamily,
-                                                    color: item.color,
-                                                    fontWeight: item.bold
-                                                        ? FontWeight.bold
-                                                        : FontWeight.normal,
-                                                    fontStyle: item.italic
-                                                        ? FontStyle.italic
-                                                        : FontStyle.normal,
-                                                    letterSpacing:
-                                                        item.letterSpacing,
-                                                    decoration:
-                                                        TextDecoration.combine([
-                                                      if (item.underline)
-                                                        TextDecoration.underline,
-                                                      if (item.strikethrough)
-                                                        TextDecoration.lineThrough,
-                                                    ]),
-                                                  ),
-                                                ),
-                                              ),
-                                              if (isFocused && !_isSaving)
-                                                Positioned(
-                                                  right: 0,
-                                                  top: 0,
-                                                  child: GestureDetector(
-                                                    onTap: _removeActiveItem,
-                                                    child: Container(
-                                                      padding:
-                                                          const EdgeInsets.all(
-                                                              4),
-                                                      decoration:
-                                                          const BoxDecoration(
-                                                        color:
-                                                            Colors.pinkAccent,
-                                                        shape: BoxShape.circle,
-                                                      ),
-                                                      child: const Icon(
-                                                          Icons.close,
-                                                          size: 16,
-                                                          color: Colors.white),
-                                                    ),
-                                                  ),
-                                                ),
-                                            ],
-                                          ),
+                                    // Tap-to-deselect on solid-colour canvas
+                                    if (!hasPhoto)
+                                      Positioned.fill(
+                                        child: GestureDetector(
+                                          behavior: HitTestBehavior.opaque,
+                                          onTap: () {
+                                            if (!_isSaving) {
+                                              setState(() => _selectedIdx = null);
+                                            }
+                                          },
                                         ),
                                       ),
-                                    ),
-                                  );
-                                }),
-                              ],
-                            );
-                          },
+
+                                    // Placed items (text, emojis, stickers)
+                                    ...List.generate(_placedItems.length, (index) {
+                                      final item = _placedItems[index];
+                                      final isFocused = _selectedIdx == index;
+                                      final itemGesturesEnabled =
+                                          !_isSaving && !_repositioningBackground;
+
+                                      return Positioned(
+                                        key: ValueKey('item_${item.id}'),
+                                        left: item.offset.dx,
+                                        top: item.offset.dy,
+                                        child: GestureDetector(
+                                          behavior: HitTestBehavior.opaque,
+                                          onTap: !itemGesturesEnabled
+                                              ? null
+                                              : () {
+                                                  setState(() {
+                                                    _selectedIdx = index;
+                                                    _activeSubSection =
+                                                        ActiveSubSection.none;
+                                                  });
+                                                },
+                                          onScaleStart: !itemGesturesEnabled
+                                              ? null
+                                              : (details) {
+                                                  _pushUndo();
+                                                  final box = _stackKey
+                                                          .currentContext!
+                                                          .findRenderObject()
+                                                      as RenderBox;
+                                                  final localPos = box
+                                                      .globalToLocal(
+                                                          details.focalPoint);
+                                                  setState(() {
+                                                    _selectedIdx = index;
+                                                    _dragAnchor =
+                                                        localPos - item.offset;
+                                                    _itemStartScale = item.scale;
+                                                    _itemStartRotation =
+                                                        item.rotation;
+                                                  });
+                                                },
+                                          onScaleUpdate: !itemGesturesEnabled
+                                              ? null
+                                              : (details) {
+                                                  final box = _stackKey
+                                                          .currentContext!
+                                                          .findRenderObject()
+                                                      as RenderBox;
+                                                  final localPos = box
+                                                      .globalToLocal(
+                                                          details.focalPoint);
+                                                  final anchor =
+                                                      _dragAnchor ?? Offset.zero;
+                                                  setState(() {
+                                                    final newOffset =
+                                                        localPos - anchor;
+                                                    item.offset = Offset(
+                                                      newOffset.dx.clamp(-40.0,
+                                                          constraints.maxWidth - 20),
+                                                      newOffset.dy.clamp(-40.0,
+                                                          constraints.maxHeight - 20),
+                                                    );
+                                                    if (details.pointerCount > 1) {
+                                                      item.scale =
+                                                          (_itemStartScale! *
+                                                                  details.scale)
+                                                              .clamp(0.3, 4.0);
+                                                      item.rotation =
+                                                          _itemStartRotation! +
+                                                              details.rotation;
+                                                    }
+                                                  });
+                                                },
+                                          onScaleEnd: (_) => _dragAnchor = null,
+                                          child: Transform.rotate(
+                                            angle: item.rotation,
+                                            child: Transform.scale(
+                                              scale: item.scale,
+                                              child: Stack(
+                                                clipBehavior: Clip.none,
+                                                children: [
+                                                  Container(
+                                                    padding:
+                                                        const EdgeInsets.all(12),
+                                                    constraints: const BoxConstraints(
+                                                      maxWidth: _canvasWidth - 40,
+                                                    ),
+                                                    decoration: BoxDecoration(
+                                                      border: Border.all(
+                                                        color: isFocused
+                                                            ? Colors.cyanAccent
+                                                            : Colors.transparent,
+                                                        width: 2,
+                                                      ),
+                                                      borderRadius:
+                                                          BorderRadius.circular(12),
+                                                    ),
+                                                    child: Text(
+                                                      item.content,
+                                                      textAlign: TextAlign.center,
+                                                      softWrap: true,
+                                                      style: TextStyle(
+                                                        fontSize: item.fontSize,
+                                                        fontFamily: item.fontFamily,
+                                                        color: item.color,
+                                                        fontWeight: item.bold
+                                                            ? FontWeight.bold
+                                                            : FontWeight.normal,
+                                                        fontStyle: item.italic
+                                                            ? FontStyle.italic
+                                                            : FontStyle.normal,
+                                                        letterSpacing:
+                                                            item.letterSpacing,
+                                                        decoration:
+                                                            TextDecoration.combine([
+                                                          if (item.underline)
+                                                            TextDecoration.underline,
+                                                          if (item.strikethrough)
+                                                            TextDecoration.lineThrough,
+                                                        ]),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  if (isFocused && !_isSaving)
+                                                    Positioned(
+                                                      right: 0,
+                                                      top: 0,
+                                                      child: GestureDetector(
+                                                        onTap: _removeActiveItem,
+                                                        child: Container(
+                                                          padding:
+                                                              const EdgeInsets.all(4),
+                                                          decoration:
+                                                              const BoxDecoration(
+                                                            color: Colors.pinkAccent,
+                                                            shape: BoxShape.circle,
+                                                          ),
+                                                          child: const Icon(
+                                                              Icons.close,
+                                                              size: 16,
+                                                              color: Colors.white),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }),
+                                    // BORDER OVERLAY (drawn on top)
+                                    if (_selectedBorderType != BorderType.none)
+                                      Positioned.fill(
+                                        child: IgnorePointer(
+                                          child: _buildBorderOverlay(),
+                                        ),
+                                      ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -660,247 +1297,145 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                 ),
               ),
 
-              // ── Bottom Panel ─────────────────────────────────────────────
+              // ── Background Color Selector (always directly below canvas) ───
               Opacity(
                 opacity: _isSaving ? 0.0 : 1.0,
                 child: IgnorePointer(
                   ignoring: _isSaving,
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16.0, vertical: 4.0),
+                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
                     child: NeumorphicCard(
-                      borderRadius: 24,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 12),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
+                      borderRadius: 16,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      child: Row(
                         children: [
-                          // Item style panel (visible when an item is selected)
-                          if (activeItem != null) ...[
-                            EditorStylePanel(
-                              activeItem: activeItem,
-                              onChanged: () => setState(() {}),
-                              onEditStart: _pushUndo,
-                              onDelete: _removeActiveItem,
-                            ),
-                          ],
-                          // Background colour row
-                          Row(
-                            children: [
-                              const Text('Background:',
-                                  style: TextStyle(
-                                      color: Colors.white70, fontSize: 12)),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: SizedBox(
-                                  height: 30,
-                                  child: ListView.builder(
-                                    scrollDirection: Axis.horizontal,
-                                    itemCount: ColorSwatchPicker.colorPalette.length,
-                                    itemBuilder: (ctx, idx) {
-                                      final c = ColorSwatchPicker.colorPalette[idx];
-                                      final isSelected = c == _bgColor;
-                                      return GestureDetector(
-                                        onTap: () => _setBackgroundColor(c),
-                                        child: Container(
-                                          width: 26,
-                                          height: 26,
-                                          margin: const EdgeInsets.symmetric(horizontal: 3),
-                                          decoration: BoxDecoration(
-                                            color: c,
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                              color: isSelected ? Colors.cyanAccent : Colors.white24,
-                                              width: isSelected ? 2 : 1,
-                                            ),
-                                          ),
+                          const Text('BG:',
+                              style: TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: SizedBox(
+                              height: 28,
+                              child: ListView.builder(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: ColorSwatchPicker.colorPalette.length,
+                                itemBuilder: (ctx, idx) {
+                                  final c = ColorSwatchPicker.colorPalette[idx];
+                                  final isSelected = c == _bgColor;
+                                  return GestureDetector(
+                                    onTap: () => _setBackgroundColor(c),
+                                    child: Container(
+                                      width: 24,
+                                      height: 24,
+                                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                                      decoration: BoxDecoration(
+                                        color: c,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: isSelected
+                                              ? Colors.cyanAccent
+                                              : Colors.white24,
+                                          width: isSelected ? 2 : 1,
                                         ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              // Custom colour picker
-                              GestureDetector(
-                                onTap: () => ColorSwatchPicker.showCustomColorPicker(
-                                    context, _bgColor, _setBackgroundColor),
-                                child: Container(
-                                  width: 30,
-                                  height: 30,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.white24, width: 1.5),
-                                    gradient: const SweepGradient(
-                                      colors: [
-                                        Colors.red,
-                                        Colors.yellow,
-                                        Colors.green,
-                                        Colors.cyan,
-                                        Colors.blue,
-                                        Colors.purple,
-                                        Colors.red,
-                                      ],
+                                      ),
                                     ),
-                                  ),
-                                  child: const Icon(Icons.add, size: 16, color: Colors.white),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          // Custom colour picker
+                          GestureDetector(
+                            onTap: () => ColorSwatchPicker.showCustomColorPicker(
+                                context, _bgColor, _setBackgroundColor),
+                            child: Container(
+                              width: 28,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white24, width: 1.5),
+                                gradient: const SweepGradient(
+                                  colors: [
+                                    Colors.red,
+                                    Colors.yellow,
+                                    Colors.green,
+                                    Colors.cyan,
+                                    Colors.blue,
+                                    Colors.purple,
+                                    Colors.red,
+                                  ],
                                 ),
                               ),
-                            ],
+                              child: const Icon(Icons.add, size: 14, color: Colors.white),
+                            ),
                           ),
                         ],
                       ),
                     ),
+                  ),
+                ),
+              ),
+
+              // ── Dynamic Section (item edit / icon / sticker / border / bg repos) ─
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+                child: Opacity(
+                  opacity: _isSaving ? 0.0 : 1.0,
+                  child: IgnorePointer(
+                    ignoring: _isSaving,
+                    child: showDynamic
+                        ? Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                            child: NeumorphicCard(
+                              borderRadius: 16,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 10),
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(maxHeight: 150),
+                                child: SingleChildScrollView(
+                                  child: dynamicSectionWidget,
+                                ),
+                              ),
+                            ),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ),
+              ),
+
+              // ── 6-Button Section (3 cols × 2 rows) ────────────────────────
+              Opacity(
+                opacity: _isSaving ? 0.0 : 1.0,
+                child: IgnorePointer(
+                  ignoring: _isSaving,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                    child: _buildButtonGrid(hasPhoto),
                   ),
                 ),
               ),
             ],
           ),
 
-          // ── Floating Reposition Panel ────────────────────────────────────
-          if (_repositioningBackground)
-            Positioned(
-              bottom: MediaQuery.of(context).size.height * 0.4,
-              left: 16,
-              right: 16,
-              child: RepaintBoundary(
-                child: NeumorphicCard(
-                  borderRadius: 24,
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Background Tools',
-                            style: TextStyle(
-                                color: Colors.cyanAccent,
-                                fontWeight: FontWeight.bold),
-                          ),
-                          TextButton.icon(
-                            onPressed: _resetBackgroundTransform,
-                            icon: const Icon(Icons.restore,
-                                color: Colors.pinkAccent, size: 16),
-                            label: const Text('Reset',
-                                style: TextStyle(color: Colors.pinkAccent)),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          NeumorphicIconButton(
-                            icon: const Icon(Icons.rotate_left,
-                                color: Colors.white),
-                            onPressed: () =>
-                                _quickRotateBackground(-math.pi / 2),
-                            borderRadius: 24,
-                            padding: const EdgeInsets.all(8),
-                          ),
-                          NeumorphicIconButton(
-                            icon:
-                                const Icon(Icons.zoom_out, color: Colors.white),
-                            onPressed: () => _stepZoomBackground(-0.1),
-                            borderRadius: 24,
-                            padding: const EdgeInsets.all(8),
-                          ),
-                          NeumorphicIconButton(
-                            icon:
-                                const Icon(Icons.zoom_in, color: Colors.white),
-                            onPressed: () => _stepZoomBackground(0.1),
-                            borderRadius: 24,
-                            padding: const EdgeInsets.all(8),
-                          ),
-                          NeumorphicIconButton(
-                            icon: const Icon(Icons.rotate_right,
-                                color: Colors.white),
-                            onPressed: () =>
-                                _quickRotateBackground(math.pi / 2),
-                            borderRadius: 24,
-                            padding: const EdgeInsets.all(8),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-          // ── Saving overlay ───────────────────────────────────────────────
+          // ── Saving overlay ─────────────────────────────────────────────────
           if (_isSaving)
             Container(
               color: Colors.black54,
               child: const Center(
-                child:
-                    CircularProgressIndicator(color: AppColors.cyanAccent),
+                child: CircularProgressIndicator(color: AppColors.cyanAccent),
               ),
             ),
         ],
       ),
-      bottomNavigationBar: Opacity(
-        opacity: _isSaving ? 0.0 : 1.0,
-        child: IgnorePointer(
-          ignoring: _isSaving,
-          child: Container(
-            color: AppColors.surface,
-            padding: const EdgeInsets.only(left: 16, right: 16, bottom: 24, top: 4),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                if (hasPhoto)
-                  NeumorphicIconButton(
-                    icon: Icon(
-                      _repositioningBackground ? Icons.check_circle : Icons.crop_rotate,
-                      color: _repositioningBackground ? Colors.greenAccent : Colors.cyanAccent,
-                      size: 26,
-                    ),
-                    isActive: _repositioningBackground,
-                    onPressed: _toggleReposition,
-                    borderRadius: 28,
-                    padding: const EdgeInsets.all(12.0),
-                  ),
-                NeumorphicIconButton(
-                  icon: Icon(
-                    hasPhoto ? Icons.image : Icons.add_photo_alternate_outlined,
-                    color: AppColors.cyanAccent,
-                    size: 26,
-                  ),
-                  onPressed: _pickBackgroundPhoto,
-                  borderRadius: 28,
-                  padding: const EdgeInsets.all(12.0),
-                ),
-                NeumorphicIconButton(
-                  icon: const Icon(Icons.camera_alt_outlined, color: Colors.greenAccent, size: 26),
-                  onPressed: _openCamera,
-                  borderRadius: 28,
-                  padding: const EdgeInsets.all(12.0),
-                ),
-                if (hasPhoto)
-                  NeumorphicIconButton(
-                    icon: const Icon(Icons.hide_image_outlined, color: AppColors.pinkAccent, size: 26),
-                    onPressed: _removeBackgroundPhoto,
-                    borderRadius: 28,
-                    padding: const EdgeInsets.all(12.0),
-                  ),
-                NeumorphicIconButton(
-                  icon: const Icon(Icons.text_fields, color: Colors.amberAccent, size: 26),
-                  onPressed: _openCustomTextInput,
-                  borderRadius: 28,
-                  padding: const EdgeInsets.all(12.0),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
+
+// ── Snapshot ──────────────────────────────────────────────────────────────────
 
 class _EditorSnapshot {
   final List<EditorItem> items;
@@ -909,6 +1444,8 @@ class _EditorSnapshot {
   final Offset bgOffset;
   final double bgScale;
   final double bgRotation;
+  final BorderType borderType;
+  final Color borderColor;
 
   const _EditorSnapshot({
     required this.items,
@@ -917,5 +1454,7 @@ class _EditorSnapshot {
     required this.bgOffset,
     required this.bgScale,
     required this.bgRotation,
+    required this.borderType,
+    required this.borderColor,
   });
 }
