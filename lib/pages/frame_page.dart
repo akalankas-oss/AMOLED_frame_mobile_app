@@ -45,7 +45,12 @@ class _SequenceThumbnailState extends State<_SequenceThumbnail> {
   Widget build(BuildContext context) {
     return RotatedBox(
       quarterTurns: widget.needsDisplayRotation ? 3 : 0,
-      child: Image.memory(widget.thumbnails[_frameIndex], fit: BoxFit.cover),
+      child: Image.memory(
+        widget.thumbnails[_frameIndex],
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.high,
+        isAntiAlias: true,
+      ),
     );
   }
 }
@@ -904,7 +909,12 @@ class _FramePageState extends State<FramePage> {
                             borderRadius: BorderRadius.circular(14),
                             child: RotatedBox(
                               quarterTurns: active!.needsDisplayRotation ? 3 : 0,
-                              child: Image.memory(active.thumbnailBytes!, fit: BoxFit.contain),
+                              child: Image.memory(
+                                active.thumbnailBytes!,
+                                fit: BoxFit.contain,
+                                filterQuality: FilterQuality.high,
+                                isAntiAlias: true,
+                              ),
                             ),
                           ),
                   ),
@@ -1077,7 +1087,12 @@ class _FramePageState extends State<FramePage> {
                                     ? Container(color: AppColors.surfaceElevated)
                                     : RotatedBox(
                                         quarterTurns: image.needsDisplayRotation ? 3 : 0,
-                                        child: Image.memory(thumb, fit: BoxFit.cover),
+                                        child: Image.memory(
+                                          thumb,
+                                          fit: BoxFit.cover,
+                                          filterQuality: FilterQuality.high,
+                                          isAntiAlias: true,
+                                        ),
                                       );
                               }
 

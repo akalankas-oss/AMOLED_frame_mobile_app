@@ -81,7 +81,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   Color _bgColor = Colors.black;
 
   // Optional photo layer on top of the solid colour
-  Uint8List? _bgImageBytes;
+  Uint8List? _bgImageBytes3;
 
   // Active sub-section in the dynamic area
   ActiveSubSection _activeSubSection = ActiveSubSection.none;
@@ -89,6 +89,9 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   // Selected border style
   BorderType _selectedBorderType = BorderType.none;
   Color _selectedBorderColor = Colors.white;
+
+  // Panel collapse state
+  bool _editPanelCollapsed = false;
 
   // ── Undo Stack ────────────────────────────────────────────────────────────
 
@@ -260,6 +263,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       } else {
         _activeSubSection = section;
         _selectedIdx = null;
+        _editPanelCollapsed = false;
         if (section != ActiveSubSection.bgReposition) {
           _repositioningBackground = false;
         }
@@ -291,6 +295,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       ));
       _selectedIdx = _placedItems.length - 1;
       _activeSubSection = ActiveSubSection.none;
+      _editPanelCollapsed = false;
     });
   }
 
@@ -307,6 +312,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       ));
       _selectedIdx = _placedItems.length - 1;
       _activeSubSection = ActiveSubSection.none;
+      _editPanelCollapsed = false;
     });
   }
 
@@ -325,6 +331,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       ));
       _selectedIdx = _placedItems.length - 1;
       _activeSubSection = ActiveSubSection.none;
+      _editPanelCollapsed = false;
     });
   }
 
@@ -834,7 +841,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       physics: const NeverScrollableScrollPhysics(),
       crossAxisSpacing: 8,
       mainAxisSpacing: 8,
-      childAspectRatio: 2.5,
+      childAspectRatio: 2.0,
       children: [
         _gridButton(
           icon: Icons.photo_library_outlined,
@@ -1021,7 +1028,11 @@ class _ImageEditorPageState extends State<ImageEditorPage>
               Expanded(
                 flex: 5,
                 child: Padding(
-                  padding: const EdgeInsets.only(top: 8.0, left: 12, right: 12),
+                  padding: EdgeInsets.only(
+                    top: MediaQuery.of(context).size.height * 0.08,
+                    left: 12,
+                    right: 12,
+                  ),
                   child: Align(
                     alignment: Alignment.topCenter,
                     child: Container(
@@ -1146,6 +1157,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                                                     _selectedIdx = index;
                                                     _activeSubSection =
                                                         ActiveSubSection.none;
+                                                    _editPanelCollapsed = false;
                                                   });
                                                 },
                                           onScaleStart: !itemGesturesEnabled
@@ -1166,6 +1178,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                                                     _itemStartScale = item.scale;
                                                     _itemStartRotation =
                                                         item.rotation;
+                                                    _editPanelCollapsed = false;
                                                   });
                                                 },
                                           onScaleUpdate: !itemGesturesEnabled
@@ -1306,7 +1319,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                     padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
                     child: NeumorphicCard(
                       borderRadius: 16,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                       child: Row(
                         children: [
                           const Text('BG:',
@@ -1317,7 +1330,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                           const SizedBox(width: 8),
                           Expanded(
                             child: SizedBox(
-                              height: 28,
+                              height: 36,
                               child: ListView.builder(
                                 scrollDirection: Axis.horizontal,
                                 itemCount: ColorSwatchPicker.colorPalette.length,
@@ -1327,8 +1340,8 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                                   return GestureDetector(
                                     onTap: () => _setBackgroundColor(c),
                                     child: Container(
-                                      width: 24,
-                                      height: 24,
+                                      width: 32,
+                                      height: 32,
                                       margin: const EdgeInsets.symmetric(horizontal: 3),
                                       decoration: BoxDecoration(
                                         color: c,
@@ -1352,8 +1365,8 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                             onTap: () => ColorSwatchPicker.showCustomColorPicker(
                                 context, _bgColor, _setBackgroundColor),
                             child: Container(
-                              width: 28,
-                              height: 28,
+                              width: 36,
+                              height: 36,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 border: Border.all(color: Colors.white24, width: 1.5),
@@ -1369,9 +1382,19 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                                   ],
                                 ),
                               ),
-                              child: const Icon(Icons.add, size: 14, color: Colors.white),
+                              child: const Icon(Icons.add, size: 16, color: Colors.white),
                             ),
                           ),
+                          const SizedBox(width: 6),
+                          if (showDynamic)
+                            GestureDetector(
+                              onTap: () => setState(() => _editPanelCollapsed = !_editPanelCollapsed),
+                              child: AnimatedRotation(
+                                turns: _editPanelCollapsed ? 0.5 : 0.0,
+                                duration: const Duration(milliseconds: 200),
+                                child: const Icon(Icons.expand_less, color: Colors.white38, size: 24),
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -1387,7 +1410,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                   opacity: _isSaving ? 0.0 : 1.0,
                   child: IgnorePointer(
                     ignoring: _isSaving,
-                    child: showDynamic
+                    child: (showDynamic && !_editPanelCollapsed)
                         ? Padding(
                             padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
                             child: NeumorphicCard(

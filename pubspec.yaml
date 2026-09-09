@@ -36,7 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   flutter_blue_plus: ^1.35.5
-  camera: ^0.11.0+2
+  camera: ^0.12.1
   image_picker: ^1.1.2
   image: ^4.2.0
   permission_handler: ^11.3.1

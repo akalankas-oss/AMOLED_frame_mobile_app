@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 
 // AMOLED Neumorphic Design Tokens
 class AppColors {
-  static const Color black = Color(0xFF000000);
-  static const Color surface = Color(0xFF141416);
-  static const Color surfaceElevated = Color(0xFF1C1C20);
-  static const Color surfaceElevatedLighter = Color(0xFF24242A);
-  static const Color surfaceInset = Color(0xFF0D0D0F);
+  static const Color black = Color(0xFF1A1A2E);
+  static const Color surface = Color(0xFF252535);
+  static const Color surfaceElevated = Color(0xFF2E2E40);
+  static const Color surfaceElevatedLighter = Color(0xFF38384C);
+  static const Color surfaceInset = Color(0xFF1C1C2C);
   
   static const Color cyanAccent = Color(0xFF00F0FF);
   static const Color pinkAccent = Color(0xFFFF2A85);
