@@ -81,7 +81,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
   Color _bgColor = Colors.black;
 
   // Optional photo layer on top of the solid colour
-  Uint8List? _bgImageBytes3;
+  Uint8List? _bgImageBytes;
 
   // Active sub-section in the dynamic area
   ActiveSubSection _activeSubSection = ActiveSubSection.none;
