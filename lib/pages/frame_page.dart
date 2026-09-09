@@ -887,7 +887,7 @@ class _FramePageState extends State<FramePage> {
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(color: Colors.white.withValues(alpha: 0.08), width: 1),
                     ),
-                    child: (active?.thumbnailBytes == null)
+                    child: (active == null || active.thumbnailBytes == null)
                         ? Center(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
@@ -905,17 +905,23 @@ class _FramePageState extends State<FramePage> {
                               ],
                             ),
                           )
-                        : ClipRRect(
-                            borderRadius: BorderRadius.circular(14),
-                            child: RotatedBox(
-                              quarterTurns: active!.needsDisplayRotation ? 3 : 0,
-                              child: Image.memory(
-                                active.thumbnailBytes!,
-                                fit: BoxFit.contain,
-                                filterQuality: FilterQuality.high,
-                                isAntiAlias: true,
-                              ),
-                            ),
+                        : FutureBuilder<Uint8List?>(
+                            future: active.isSequence ? active.loadSequenceFrame(0) : active.loadFullBytes(),
+                            builder: (context, snapshot) {
+                              final displayBytes = snapshot.data ?? active.thumbnailBytes!;
+                              return ClipRRect(
+                                borderRadius: BorderRadius.circular(14),
+                                child: RotatedBox(
+                                  quarterTurns: active.needsDisplayRotation ? 3 : 0,
+                                  child: Image.memory(
+                                    displayBytes,
+                                    fit: BoxFit.contain,
+                                    filterQuality: FilterQuality.high,
+                                    isAntiAlias: true,
+                                  ),
+                                ),
+                              );
+                            },
                           ),
                   ),
                 ),
