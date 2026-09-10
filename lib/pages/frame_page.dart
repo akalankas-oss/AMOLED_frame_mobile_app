@@ -884,7 +884,7 @@ class _FramePageState extends State<FramePage> {
                     width: double.infinity,
                     decoration: BoxDecoration(
                       color: Colors.black,
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.zero,
                       border: Border.all(color: Colors.white.withValues(alpha: 0.08), width: 1),
                     ),
                     child: (active == null || active.thumbnailBytes == null)
@@ -909,8 +909,7 @@ class _FramePageState extends State<FramePage> {
                             future: active.isSequence ? active.loadSequenceFrame(0) : active.loadFullBytes(),
                             builder: (context, snapshot) {
                               final displayBytes = snapshot.data ?? active.thumbnailBytes!;
-                              return ClipRRect(
-                                borderRadius: BorderRadius.circular(14),
+                              return ClipRect(
                                 child: RotatedBox(
                                   quarterTurns: active.needsDisplayRotation ? 3 : 0,
                                   child: Image.memory(

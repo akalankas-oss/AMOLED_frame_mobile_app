@@ -580,7 +580,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       return Container(
         decoration: BoxDecoration(
           border: Border.all(color: _selectedBorderColor, width: 3.0),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.zero,
         ),
       );
     } else if (_selectedBorderType == BorderType.double) {
@@ -588,13 +588,13 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       return Container(
         decoration: BoxDecoration(
           border: Border.all(color: _selectedBorderColor, width: w),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.zero,
         ),
         padding: const EdgeInsets.all(w + 2),
         child: Container(
           decoration: BoxDecoration(
             border: Border.all(color: _selectedBorderColor, width: w),
-            borderRadius: BorderRadius.circular(16 - w - 2),
+            borderRadius: BorderRadius.zero,
           ),
         ),
       );
@@ -603,19 +603,19 @@ class _ImageEditorPageState extends State<ImageEditorPage>
       return Container(
         decoration: BoxDecoration(
           border: Border.all(color: _selectedBorderColor, width: w),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.zero,
         ),
         padding: const EdgeInsets.all(w + 1.5),
         child: Container(
           decoration: BoxDecoration(
             border: Border.all(color: _selectedBorderColor, width: w),
-            borderRadius: BorderRadius.circular(16 - w - 1.5),
+            borderRadius: BorderRadius.zero,
           ),
           padding: const EdgeInsets.all(w + 1.5),
           child: Container(
             decoration: BoxDecoration(
               border: Border.all(color: _selectedBorderColor, width: w),
-              borderRadius: BorderRadius.circular(16 - (w + 1.5) * 2),
+              borderRadius: BorderRadius.zero,
             ),
           ),
         ),
@@ -1038,7 +1038,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                     child: Container(
                       decoration: BoxDecoration(
                         color: AppColors.surface,
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.zero,
                         boxShadow: _selectedBorderType == BorderType.none
                             ? null
                             : [
@@ -1051,8 +1051,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                       ),
                       child: RepaintBoundary(
                         key: _boundaryKey,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
+                        child: ClipRect(
                           child: AspectRatio(
                             aspectRatio: _canvasWidth / _canvasHeight,
                             child: LayoutBuilder(
