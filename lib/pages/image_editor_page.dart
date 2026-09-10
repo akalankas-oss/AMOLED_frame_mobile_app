@@ -1416,12 +1416,7 @@ class _ImageEditorPageState extends State<ImageEditorPage>
                               borderRadius: 16,
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 12, vertical: 10),
-                              child: ConstrainedBox(
-                                constraints: const BoxConstraints(maxHeight: 150),
-                                child: SingleChildScrollView(
-                                  child: dynamicSectionWidget,
-                                ),
-                              ),
+                              child: dynamicSectionWidget,
                             ),
                           )
                         : const SizedBox.shrink(),
